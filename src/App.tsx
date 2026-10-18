@@ -3680,8 +3680,11 @@ export default function App() {
                       setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
                       setSelectedSquare(null); setPossibleMoves([]);
                       setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
+                      humanColorRef.current = 'w';
+                      setHumanColor('w');
+                      setFlipped(false);
                       setActiveTab('history');
-                      initGame('ai', undefined, undefined, false);
+                      initGame('ai', undefined, 'w', false);
                     }}>🚪 Opuść trening</button>
                   </div>
                   <div className="text-center text-gray-500 text-xs mt-4">
