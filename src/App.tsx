@@ -1445,7 +1445,7 @@ export default function App() {
     return `${rows.join('/')} ${sideToMoveRef.current} ${cs} ${ep} ${halfmoveRef.current} ${full}`;
   };
 
-  const loadFEN = (fen: string): boolean => {
+  const loadFEN = (fen: string, skipAIMove = false): boolean => {
     const parsed = parseFENBoard(fen);
     if (!parsed) return false;
     pushHistory();
@@ -1481,6 +1481,7 @@ export default function App() {
     // Wczytana pozycja z turą komputera? Komputer rusza sam (z pominięciem treningu,
     // który ustawia puzzleModeRef synchronicznie zaraz po loadFEN).
     setTimeout(() => {
+      if (skipAIMove) return;
       if (gameMode === 'ai' && !puzzleModeRef.current && gameActiveRef.current
         && !gameResultRef.current && sideToMoveRef.current !== humanColorRef.current) {
         engineRunningRef.current = true;
@@ -1579,7 +1580,7 @@ export default function App() {
     try { localStorage.removeItem('ad3-save'); } catch { /* ignore */ }
   };
 
-  const initGame = (mode: 'ai' | 'human' = 'ai', customFen?: string, color?: 'w' | 'b' | 'random') => {
+  const initGame = (mode: 'ai' | 'human' = 'ai', customFen?: string, color?: 'w' | 'b' | 'random', autoStart: boolean = true) => {
     const fen = customFen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
     setGameMode(mode);
     // Wybór koloru/strony. W grze z komputerem to kolor GRACZA (losowanie możliwe).
@@ -1647,8 +1648,8 @@ export default function App() {
     setEvalScore({ cp: 25, mate: null });
 
     playSound('start');
-    // Grasz czarnymi? Komputer (białe) rusza pierwszy.
-    if (mode === 'ai' && hc === 'b') {
+    // Grasz czarnymi? Komputer (białe) rusza pierwszy (tylko gdy autoStart włączony).
+    if (autoStart && mode === 'ai' && hc === 'b') {
       engineRunningRef.current = true;
       setEngineRunning(true);
       setTimeout(() => makeAIMove(), 600);
@@ -3304,7 +3305,7 @@ export default function App() {
                             return <button className="btn" onClick={() => startPuzzle(open[Math.floor(Math.random() * open.length)])}>🎲 Następna losowa</button>;
                           })()}
                           <button className="btn btn-secondary" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
-                          <button className="btn btn-secondary" onClick={() => initGame()}>🚪 Wyjdź</button>
+                          <button className="btn btn-secondary" onClick={() => initGame('ai', undefined, undefined, false)}>🚪 Wyjdź</button>
                         </div>
                       </div>
                     </div>
