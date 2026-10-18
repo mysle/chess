@@ -3305,7 +3305,7 @@ export default function App() {
                             return <button className="btn" onClick={() => startPuzzle(open[Math.floor(Math.random() * open.length)])}>🎲 Następna losowa</button>;
                           })()}
                           <button className="btn btn-secondary" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
-                          <button className="btn btn-secondary" onClick={() => initGame('ai', undefined, undefined, false)}>🚪 Wyjdź</button>
+                          <button className="btn btn-secondary" onClick={() => { setActiveTab('history'); initGame('ai', undefined, undefined, false); }}>🚪 Wyjdź</button>
                         </div>
                       </div>
                     </div>
@@ -3436,7 +3436,7 @@ export default function App() {
                     </div>
                     <div className="ctl-hint">⏱️ Czas na partię (dla każdego):</div>
                     <div className="chips" role="group" aria-label="Kontrola czasu">
-                      {[0, 1, 3, 5, 10, 15, 30, 60, 120].map(m => (
+                      {[0, 1, 3, 5, 10, 15, 25, 30, 45, 60, 90, 120, 180].map(m => (
                         <button type="button" key={m} aria-pressed={timeControl === m} title={m === 0 ? 'Gra bez zegara' : `Każdy gracz ma ${m} minut`} className={`chip ${timeControl === m ? 'active-time' : ''}`} onClick={() => {
                           setTimeControl(m);
                           timeRefs.current = { w: m * 60, b: m * 60 };
@@ -3676,11 +3676,12 @@ export default function App() {
                     <button className="btn btn-secondary bottom-btn" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`🔁 Zagadka zresetowana. 💡 ${PUZZLES_FROM_LICHESS[puzzleUi.idx]?.tip || ''}`); }}>🔄 Resetuj zagadkę</button>
                     <button className="btn btn-secondary bottom-btn" onClick={() => {
                       puzzleModeRef.current = false;
+                      puzzleIdxRef.current = -1;
                       setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
                       setSelectedSquare(null); setPossibleMoves([]);
                       setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
-                      // Przywróć planszę do stanu początkowego zagadki, bez startowania gry z komputerem
-                      restorePuzzleFen();
+                      setActiveTab('history');
+                      initGame('ai', undefined, undefined, false);
                     }}>🚪 Opuść trening</button>
                   </div>
                   <div className="text-center text-gray-500 text-xs mt-4">
