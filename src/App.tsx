@@ -560,7 +560,6 @@ export default function App() {
   const cwRef = useRef<string[]>([]);
   const cbRef = useRef<string[]>([]);
   const arrowStartRef = useRef<number | null>(null);
-  const touchStartRef = useRef(false);
   const timeRefs = useRef({ w: 300, b: 300 });
   const autoFlipRef = useRef(false);
   // Token unieważniający spóźnione odpowiedzi silnika (np. Nowa Gra w trakcie myślenia)
@@ -572,6 +571,7 @@ export default function App() {
   const puzzleFenRef = useRef('');
   const attemptsRef = useRef(0);
   const puzzleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const puzzleActionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const puzzleReturnRef = useRef<PuzzleReturnState | null>(null);
   const puzzleSessionRestoredRef = useRef(false);
   const gameResultRef = useRef<null | { type: GameResultType; winner: 'w' | 'b' | null }>(null);
@@ -620,6 +620,7 @@ export default function App() {
   const [openingName, setOpeningName] = useState('');
   const [puzzleUi, setPuzzleUi] = useState<{ idx: number } | null>(null);
   const [puzzleSolved, setPuzzleSolved] = useState(false);
+  const [puzzleActionsReady, setPuzzleActionsReady] = useState(true);
   const [puzzleLevelFilter, setPuzzleLevelFilter] = useState<'all' | 1 | 2 | 3>('all');
   const [puzzleVisible, setPuzzleVisible] = useState(80);
   const [puzzleMsg, setPuzzleMsg] = useState('');
@@ -942,6 +943,8 @@ export default function App() {
     gameResultRef.current = null;
     // Ręczny import FEN zawsze opuszcza tryb treningu
     clearPuzzleTimer();
+    clearPuzzleActionsTimer();
+    setPuzzleActionsReady(false);
     puzzleModeRef.current = false;
     clearPuzzleSession();
     setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
@@ -1116,6 +1119,8 @@ export default function App() {
     setGameResult(null);
     gameResultRef.current = null;
     clearPuzzleTimer();
+    clearPuzzleActionsTimer();
+    setPuzzleActionsReady(false);
     puzzleModeRef.current = false;
     if (!preservePuzzleSession) clearPuzzleSession();
     setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
@@ -1249,9 +1254,18 @@ export default function App() {
     if (puzzleTimerRef.current) { clearTimeout(puzzleTimerRef.current); puzzleTimerRef.current = null; }
   };
 
+  const clearPuzzleActionsTimer = () => {
+    if (puzzleActionsTimerRef.current) {
+      clearTimeout(puzzleActionsTimerRef.current);
+      puzzleActionsTimerRef.current = null;
+    }
+  };
+
   // Wczytaj pozycję zadania (bez kasowania licznika prób)
   const restorePuzzleFen = () => {
     clearPuzzleTimer();
+    clearPuzzleActionsTimer();
+    setPuzzleActionsReady(false);
     const ok = loadFEN(puzzleFenRef.current);
     // loadFEN opuszcza tryb treningu - wracamy do niego natychmiast
     puzzleModeRef.current = true;
@@ -1264,6 +1278,8 @@ export default function App() {
 
   const leavePuzzle = (tab: string = 'history') => {
     clearPuzzleTimer();
+    clearPuzzleActionsTimer();
+    setPuzzleActionsReady(false);
     puzzleModeRef.current = false;
     puzzleIdxRef.current = -1;
     puzzleFenRef.current = '';
@@ -1391,6 +1407,12 @@ export default function App() {
     const idx = puzzleIdxRef.current;
     const p = PUZZLES_FROM_LICHESS[idx];
     setPuzzleSolved(true);
+    clearPuzzleActionsTimer();
+    setPuzzleActionsReady(false);
+    puzzleActionsTimerRef.current = setTimeout(() => {
+      puzzleActionsTimerRef.current = null;
+      setPuzzleActionsReady(true);
+    }, 500);
     const pvText = p?.pv ? ` Kontynuacja z partii: ${p.pv}` : '';
     setPuzzleMsg(`🏆 Dobrze! ${p?.sol || ''}${pvText}`);
     setPuzzleUi({ idx });
@@ -2733,8 +2755,7 @@ export default function App() {
                               key={sq}
                               className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''} ${isLast ? 'last-move' : ''} ${isCheck ? 'in-check' : ''} ${isHint ? 'hint' : ''} ${arrowPending === sq ? 'arrow-from' : ''} ${showMoves ? (hasEnemy || sq === enPassantRef.current ? 'possible-capture' : 'possible-move') : ''}`}
                               style={{ background: isSelected || isLast || isCheck ? undefined : (isLight ? theme.light : theme.dark) }}
-                              onClick={() => { if (touchStartRef.current) return; onSquareClick(sq); }}
-                              onTouchStart={() => { touchStartRef.current = true; onSquareClick(sq); setTimeout(() => { touchStartRef.current = false; }, 400); }}
+                              onClick={() => onSquareClick(sq)}
                               onMouseDown={e => { if (e.button === 2) arrowStartRef.current = sq; }}
                               draggable={false}
                               onDragStart={e => {
@@ -2879,14 +2900,14 @@ export default function App() {
                               ▶️ Kontynuacja Stockfisha: {PUZZLES_FROM_LICHESS[puzzleUi.idx]?.pv}
                             </div>
                           )}
-                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', opacity: puzzleActionsReady ? 1 : 0.55, transition: 'opacity 0.2s' }}>
                           {(() => {
                             const open = PUZZLES_FROM_LICHESS.map((_, i) => i).filter(i => !solvedPuzzles.includes(i) && i !== puzzleUi.idx);
                             if (open.length === 0) return <div className="mate-sub">🏆 Wszystkie zaliczone! Mistrz!</div>;
-                            return <button className="btn" onClick={() => startPuzzle(open[Math.floor(Math.random() * open.length)])}>🎲 Następna losowa</button>;
+                            return <button className="btn" disabled={!puzzleActionsReady} onClick={() => startPuzzle(open[Math.floor(Math.random() * open.length)])}>🎲 Następna losowa</button>;
                           })()}
-                          <button className="btn btn-secondary" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
-                          <button className="btn btn-secondary" onClick={() => leavePuzzle()}>🚪 Wyjdź</button>
+                          <button className="btn btn-secondary" disabled={!puzzleActionsReady} onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
+                          <button className="btn btn-secondary" disabled={!puzzleActionsReady} onClick={() => leavePuzzle()}>🚪 Wyjdź</button>
                         </div>
                       </div>
                     </div>
