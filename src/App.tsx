@@ -2520,7 +2520,16 @@ export default function App() {
         /* Telefony: pełne etykiety, nic nie przycięte, wygodne cele dotykowe */
         @media (max-width: 640px) {
           .panel { padding: 12px !important; margin: 6px !important; }
-          .captured-row { grid-template-columns: 1fr; }
+          .captured-row { grid-template-columns: 1fr; gap: 6px; }
+          .cap-card { padding: 4px 6px; }
+          .cap-head { gap: 4px; margin-bottom: 2px; }
+          .cap-name { font-size: 11px; }
+          .cap-count, .cap-adv { font-size: 9px; padding: 0 6px; }
+          .captured-pieces { padding: 4px 6px; max-height: 16vh; border-radius: 9px; }
+          .cap-list { gap: 3px; }
+          .captured-piece { width: 28px; height: 28px; border-radius: 7px; }
+          .captured-piece.uni { font-size: 19px; }
+          .cap-empty { font-size: 10px; padding: 0; }
           .bottom-bar { grid-template-columns: 1fr; }
           .ctl-card { padding: 12px; }
           .actions-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
