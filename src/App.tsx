@@ -5,6 +5,50 @@ import { detectOpening } from './openings';
 
 const PUZZLE_INDEX = new Map(PUZZLES_FROM_LICHESS.map((p, i) => [p, i]));
 
+// 📱 Odzyskiwanie sesji po przeładowaniu strony (mobile potrafi zabić kartę
+// przy dużej liście zagadek albo przy pull-to-refresh).
+const SESSION_TAB_KEY = 'ad3-active-tab';
+const SESSION_PUZZLE_KEY = 'ad3-puzzle-session';
+const SESSION_PUZZLE_TTL = 6 * 60 * 60 * 1000;
+
+const readSessionTab = (): string => {
+  try {
+    const tab = sessionStorage.getItem(SESSION_TAB_KEY);
+    if (tab === 'history' || tab === 'puzzles' || tab === 'options') return tab;
+  } catch { /* ignore */ }
+  return 'analysis';
+};
+
+const saveSessionTab = (tab: string) => {
+  try { sessionStorage.setItem(SESSION_TAB_KEY, tab); } catch { /* ignore */ }
+};
+
+const savePuzzleSession = (idx: number) => {
+  if (!Number.isInteger(idx) || idx < 0 || idx >= PUZZLES_FROM_LICHESS.length) return;
+  try {
+    sessionStorage.setItem(SESSION_PUZZLE_KEY, JSON.stringify({ idx, at: Date.now() }));
+  } catch { /* ignore */ }
+};
+
+const readPuzzleSession = (): number | null => {
+  try {
+    const raw = sessionStorage.getItem(SESSION_PUZZLE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { idx?: unknown; at?: unknown };
+    if (typeof data.idx !== 'number' || !Number.isInteger(data.idx)) return null;
+    if (data.idx < 0 || data.idx >= PUZZLES_FROM_LICHESS.length) return null;
+    if (typeof data.at !== 'number' || Date.now() - data.at > SESSION_PUZZLE_TTL) {
+      sessionStorage.removeItem(SESSION_PUZZLE_KEY);
+      return null;
+    }
+    return data.idx;
+  } catch { return null; }
+};
+
+const clearPuzzleSession = () => {
+  try { sessionStorage.removeItem(SESSION_PUZZLE_KEY); } catch { /* ignore */ }
+};
+
 // Pasek oceny: centypiony (perspektywa białych) -> % dla białych + etykieta
 export function evalToDisplay(ev: { cp: number | null; mate: number | null }): { pct: number; label: string } {
   if (ev.mate !== null && ev.mate !== undefined) {
@@ -529,6 +573,7 @@ export default function App() {
   const attemptsRef = useRef(0);
   const puzzleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const puzzleReturnRef = useRef<PuzzleReturnState | null>(null);
+  const puzzleSessionRestoredRef = useRef(false);
   const gameResultRef = useRef<null | { type: GameResultType; winner: 'w' | 'b' | null }>(null);
 
   const [board, setBoard] = useState<(string | null)[]>(Array(64).fill(null));
@@ -556,7 +601,7 @@ export default function App() {
   const [autoFlip, setAutoFlip] = useState(false);
   const [showLegalMoves, setShowLegalMoves] = useState(true);
   const [engineRunning, setEngineRunning] = useState(false);
-  const [activeTab, setActiveTab] = useState('analysis');
+  const [activeTab, setActiveTab] = useState(readSessionTab);
   const [promotionSquare, setPromotionSquare] = useState<{square: number, isWhite: boolean} | null>(null);
   const [gameResult, setGameResult] = useState<null | { type: GameResultType, winner: 'w' | 'b' | null }>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -576,6 +621,7 @@ export default function App() {
   const [puzzleUi, setPuzzleUi] = useState<{ idx: number } | null>(null);
   const [puzzleSolved, setPuzzleSolved] = useState(false);
   const [puzzleLevelFilter, setPuzzleLevelFilter] = useState<'all' | 1 | 2 | 3>('all');
+  const [puzzleVisible, setPuzzleVisible] = useState(80);
   const [puzzleMsg, setPuzzleMsg] = useState('');
   const [solvedPuzzles, setSolvedPuzzles] = useState<number[]>([]);
   const [listMsg, setListMsg] = useState('');
@@ -762,13 +808,32 @@ export default function App() {
       const pz = localStorage.getItem('ad3-puzzles5');
       if (pz) setSolvedPuzzles(JSON.parse(pz));
     } catch { /* ignore */ }
-    initGame();
+    initGame('ai', undefined, undefined, true, true);
     // Silnik Stockfish ładuj w tle (nie blokuj startu planszy)
     const offEngineStatus = stockfish.onStatus((s) => setEngineStatus(s));
     stockfish.ensureReady().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => offEngineStatus();
   }, []);
+
+  // 📱 Po przeładowaniu karty wróć do przerwanej zagadki zamiast zaczynać od nowa.
+  useEffect(() => {
+    if (puzzleSessionRestoredRef.current) return;
+    puzzleSessionRestoredRef.current = true;
+    const idx = readPuzzleSession();
+    if (idx !== null) startPuzzle(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 📱 Zapamiętaj ostatnią zakładkę (Analiza / Zagadki / Opcje).
+  useEffect(() => {
+    saveSessionTab(activeTab);
+  }, [activeTab]);
+
+  // 📱 Po zmianie filtra wróć do początku listy (mniej DOM = stabilniej na telefonie).
+  useEffect(() => {
+    setPuzzleVisible(80);
+  }, [puzzleLevelFilter]);
 
   // ⏱️ Zegary szachowe
   useEffect(() => {
@@ -878,6 +943,7 @@ export default function App() {
     // Ręczny import FEN zawsze opuszcza tryb treningu
     clearPuzzleTimer();
     puzzleModeRef.current = false;
+    clearPuzzleSession();
     setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
     setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
     positionCountsRef.current = {};
@@ -993,7 +1059,7 @@ export default function App() {
     try { localStorage.removeItem('ad3-save'); } catch { /* ignore */ }
   };
 
-  const initGame = (mode: 'ai' | 'human' = 'ai', customFen?: string, color?: 'w' | 'b' | 'random', autoStart: boolean = true) => {
+  const initGame = (mode: 'ai' | 'human' = 'ai', customFen?: string, color?: 'w' | 'b' | 'random', autoStart: boolean = true, preservePuzzleSession: boolean = false) => {
     const fen = customFen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
     setGameMode(mode);
     // Wybór koloru/strony. W grze z komputerem to kolor GRACZA (losowanie możliwe).
@@ -1051,6 +1117,7 @@ export default function App() {
     gameResultRef.current = null;
     clearPuzzleTimer();
     puzzleModeRef.current = false;
+    if (!preservePuzzleSession) clearPuzzleSession();
     setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
     setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
     setOpeningName(''); setFenBox('');
@@ -1189,6 +1256,7 @@ export default function App() {
     // loadFEN opuszcza tryb treningu - wracamy do niego natychmiast
     puzzleModeRef.current = true;
     gameResultRef.current = null;
+    savePuzzleSession(puzzleIdxRef.current);
     setPuzzleUi({ idx: puzzleIdxRef.current });
     setPuzzleSolved(false);
     return ok;
@@ -1199,6 +1267,7 @@ export default function App() {
     puzzleModeRef.current = false;
     puzzleIdxRef.current = -1;
     puzzleFenRef.current = '';
+    clearPuzzleSession();
     attemptsRef.current = 0;
     setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg(''); setListMsg('');
     setSelectedSquare(null); setPossibleMoves([]);
@@ -1288,6 +1357,7 @@ export default function App() {
     }
     puzzleIdxRef.current = i;
     puzzleFenRef.current = p.fen;
+    savePuzzleSession(i);
     puzzleSideRef.current = (p.fen.split(' ')[1] === 'b' ? 'b' : 'w');
     attemptsRef.current = 0;
     // Szachownica od razu stroną gracza: czarne zadania = widok czarnych
@@ -3223,9 +3293,14 @@ export default function App() {
                       >🎲 Losowa</button>
                       <button
                         className="btn btn-secondary bottom-btn"
-                        onClick={() => { showHint(); setActiveTab('history'); }}
-                        title="Pokaż najlepszy ruch na szachownicy"
-                      >💡 Podpowiedź</button>
+                        onClick={() => {
+                          const idx = randomUnsolved();
+                          if (idx < 0) { setListMsg('🏆 Wszystkie zagadki rozwiązane!'); return; }
+                          startPuzzle(idx);
+                          void showHint();
+                        }}
+                        title="Wylosuj zagadkę i pokaż podpowiedź na szachownicy"
+                      >💡 Losowa z podpowiedzią</button>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -3250,15 +3325,16 @@ export default function App() {
                     const filtered = puzzleLevelFilter === 'all'
                       ? PUZZLES_FROM_LICHESS
                       : PUZZLES_FROM_LICHESS.filter(p => p.level === puzzleLevelFilter);
+                    const visible = filtered.slice(0, puzzleVisible);
                     const solvedSet = new Set(solvedPuzzles);
                     return (
                       <>
                         <div className="puzzle-list">
-                          {filtered.map((p, i) => {
+                          {visible.map((p, i) => {
                             const globalIdx = PUZZLE_INDEX.get(p) ?? i;
                             const isSolved = solvedSet.has(globalIdx);
                             return (
-                              <div key={i} className={`puzzle-item ${isSolved ? 'solved' : ''}`}>
+                              <div key={globalIdx} className={`puzzle-item ${isSolved ? 'solved' : ''}`}>
                                 <div className="puzzle-info">
                                   <span className={`puzzle-level lvl${p.level}`}>{p.level === 1 ? '🟢' : p.level === 2 ? '🟡' : '🔴'}</span>
                                   <span className="puzzle-name">{p.name}</span>
@@ -3274,9 +3350,23 @@ export default function App() {
                               </div>
                             );
                           })}
+                          {filtered.length > visible.length && (
+                            <button
+                              className="btn btn-secondary bottom-btn"
+                              style={{ margin: '4px auto 2px', display: 'block' }}
+                              onClick={() => setPuzzleVisible(v => v + 80)}
+                            >
+                              Pokaż więcej ({visible.length} / {filtered.length})
+                            </button>
+                          )}
                         </div>
                         {filtered.length === 0 && (
                           <div className="text-center text-gray-400 text-sm py-8">Brak zagadek w tym filtrze</div>
+                        )}
+                        {filtered.length > 0 && (
+                          <div className="text-center text-gray-500 text-xs mt-2">
+                            Wyświetlono {visible.length} z {filtered.length}
+                          </div>
                         )}
                       </>
                     );

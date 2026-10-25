@@ -6,9 +6,20 @@ body,
   min-height: 100%;
 }
 
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 body {
   background: #020617;
   overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chess-board,
+.chess-board .square {
+  touch-action: manipulation;
 }
 
 .bubble-aurora {
@@ -113,11 +124,11 @@ body {
 }
 
 @media (max-width: 640px) {
-  .bubble-field:not(.bubble-field-front) .bubble:nth-child(n + 29) {
+  .bubble-field:not(.bubble-field-front) .bubble:nth-child(n + 21) {
     display: none;
   }
 
-  .bubble-field-front .bubble:nth-child(n + 7) {
+  .bubble-field-front .bubble:nth-child(n + 6) {
     display: none;
   }
 }
