@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { stockfish, type EngineStatus } from './engine/stockfishClient';
 import { PUZZLES_FROM_LICHESS } from './puzzles_data';
+import { detectOpening } from './openings';
+
+const PUZZLE_INDEX = new Map(PUZZLES_FROM_LICHESS.map((p, i) => [p, i]));
 
 // Pasek oceny: centypiony (perspektywa białych) -> % dla białych + etykieta
 export function evalToDisplay(ev: { cp: number | null; mate: number | null }): { pct: number; label: string } {
@@ -59,710 +62,54 @@ export const BOARD_THEMES = [
   { id: 'gray', name: 'Grafit', light: 'linear-gradient(145deg,#f2f2f2 0%,#d9d9d9 100%)', dark: 'linear-gradient(145deg,#7a7a7a 0%,#5c5c5c 100%)' },
 ];
 
+const BUBBLES = Array.from({ length: 46 }, (_, i) => {
+  const size = 12 + ((i * 37) % 126);
+  const drift = (i % 2 === 0 ? 1 : -1) * (16 + ((i * 19) % 74));
+  return {
+    left: (i * 61 + 7) % 100,
+    size,
+    duration: 20 + ((i * 13) % 26),
+    delay: -((i * 7) % 34),
+    drift,
+    driftReverse: Math.round(-drift * 0.6),
+    hue: [186, 198, 214, 236, 268, 292, 318, 342][i % 8],
+    opacity: 0.13 + ((i * 7) % 20) / 100,
+    blur: i % 11 === 0 ? 2 + (i % 3) : 0,
+  };
+});
+
+const FOREGROUND_BUBBLES = Array.from({ length: 12 }, (_, i) => {
+  const size = 64 + ((i * 47) % 170);
+  const drift = (i % 2 === 0 ? 1 : -1) * (20 + ((i * 23) % 64));
+  return {
+    left: (i * 47 + 13) % 100,
+    size,
+    duration: 30 + ((i * 11) % 22),
+    delay: -((i * 9) % 40),
+    drift,
+    driftReverse: Math.round(-drift * 0.6),
+    hue: [190, 210, 245, 270, 305, 330][i % 6],
+    opacity: 0.035 + ((i * 5) % 7) / 100,
+    blur: 1 + (i % 3),
+  };
+});
+
+const bubbleStyle = (bubble: (typeof BUBBLES)[number]): CSSProperties => ({
+  left: `${bubble.left}%`,
+  width: bubble.size,
+  height: bubble.size,
+  '--bubble-duration': `${bubble.duration}s`,
+  '--bubble-delay': `${bubble.delay}s`,
+  '--bubble-drift': `${bubble.drift}px`,
+  '--bubble-drift-reverse': `${bubble.driftReverse}px`,
+  '--bubble-hue': bubble.hue,
+  '--bubble-opacity': bubble.opacity,
+  '--bubble-blur': `${bubble.blur}px`,
+} as CSSProperties);
+
 /* (zestaw Unicode usunięty - zastąpiony przez Kingdom, generator poniżej) */
 
-const ECO_POS: Record<string, string> = {
-  "r..q.rk..bp.bpppp.np.n...p..p.......P....BP..N.PPP.P.PP.RNBQR.K.w": "Partia Hiszpańska, wariant Zajcewa",
-  "r..qkb.r.bpp.pppp.n..n...p..p.......P....B...N..PPPP.PPPRNBQ.RK.w": "Partia Hiszpańska, neo-archangielski",
-  "r..qkbnrppp.pppp..n........p......PP..b......N..PP..PPPPRNBQKB.Rw": "Obrona Czigorina, wariant Janowskiego",
-  "r.b.k..rppppnppp..n..q....b........NP.....P.B...PP...PPPRN.QKB.Rw": "Partia Szkocka, wariant Lollego",
-  "r.b.k.nrpppp.ppp..n..q....b........NP.......B...PPP..PPPRN.QKB.Rw": "Partia Szkocka, wariant Lollego",
-  "r.b.k.nrpppp.ppp..n..q....b........NP.....P.B...PP...PPPRN.QKB.Rb": "Partia Szkocka, wariant Lollego",
-  "r.b.kb.rpp.n.ppp..p.pn..q..p..B...PP......N.PN..PP...PPPR..QKB.Rw": "Gambit Hetmański, wariant Cambridge Springs",
-  "r.b.kbnrpppp.ppp..n................NP..q........PPP..PPPRNBQKB.Rw": "Partia Szkocka, wariant Steinitza",
-  "r.bq.rk...p.bpppp..p.n..np..p.......P....BP..N.PPP.P.PP.RNBQR.K.w": "Partia Hiszpańska, wariant Czigorina",
-  "r.bq.rk...p.bpppp.np.n...p..p.......P....BP..N..PP.P.PPPRNBQR.K.w": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bq.rk...p.bpppp.np.n...p..p.......P....BP..N.PPP.P.PP.RNBQR.K.b": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bq.rk.ppp..pbp..np.np.....p.....PPP.....N..N..PP..BPPPR.BQ.RK.w": "Obrona Królewsko-indyjska, Mar del Plata",
-  "r.bq.rk.ppp..pbp..np.np....Pp.....P.P.....N..N..PP..BPPPR.BQ.RK.b": "Obrona Królewsko-indyjska, Mar del Plata",
-  "r.bq.rk.ppp.npbp...p.np....Pp.....P.P.....N..N..PP..BPPPR.BQ.RK.w": "Obrona Królewsko-indyjska, Mar del Plata",
-  "r.bqk..r..p.bpppp.np.n...p..p.......P....B...N..PPPP.PPPRNBQR.K.w": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..r..p.bpppp.np.n...p..p.......P....BP..N..PP.P.PPPRNBQR.K.b": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..r..ppbpppp.n..n...p..p.......P....B...N..PPPP.PPPRNBQR.K.b": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..r..ppbpppp.n..n...p..p...B...P........N..PPPP.PPPRNBQR.K.w": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..r.pppbpppp.n..n......p...B...P........N..PPPP.PPPRNBQ.RK.w": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..r.pppbpppp.n..n......p...B...P........N..PPPP.PPPRNBQR.K.b": "Partia Hiszpańska, wariant Zajcewa",
-  "r.bqk..rppp..ppp..np.n....b.p.....B.P.....PP.N..PP...PPPRNBQK..Rw": "Partia Włoska z ...d6",
-  "r.bqk..rpppp.ppp..n..n....b.p.....B.P.....P..N..PP.P.PPPRNBQK..Rw": "Partia Włoska z ...d6",
-  "r.bqk..rpppp.ppp..n..n....b.p.....BPP.....P..N..PP...PPPRNBQK..Rb": "Partia Włoska, atak Moellera",
-  "r.bqk..rpppp.ppp..n..n...B..p....b..P.....N..N..PPPP.PPPR.BQK..Rw": "Partia Czterech Skoczków, hiszpańska",
-  "r.bqk.nrpppp.ppp..n.........p....bB.P........N..P.PP.PPPRNBQK..Rw": "Partia Włoska, gambit Evansa przyjęty (główny)",
-  "r.bqk.nrpppp.ppp..n.........p....bB.P.....P..N..P..P.PPPRNBQK..Rb": "Partia Włoska, gambit Evansa przyjęty (główny)",
-  "r.bqk.nrpppp.ppp..n.......b.........P....N......PPP..PPPRNBQKB.Rb": "Partia Szkocka, wariant Pottera",
-  "r.bqk.nrpppp.ppp..n.......b........NP...........PPP..PPPRNBQKB.Rw": "Partia Szkocka, wariant Pottera",
-  "r.bqk.nrpppp.ppp..n.......b........NP.......B...PPP..PPPRN.QKB.Rb": "Partia Szkocka, wariant Lollego",
-  "r.bqk.nrpppp.ppp..n.......b.p.....B.P........N..PPPP.PPPRNBQK..Rw": "Partia Włoska, gambit Evansa przyjęty (główny)",
-  "r.bqk.nrpppp.ppp..n.......b.p.....B.P.....P..N..PP.P.PPPRNBQK..Rb": "Partia Włoska z ...d6",
-  "r.bqk.nrpppp.ppp..n.......b.p....PB.P........N..P.PP.PPPRNBQK..Rb": "Partia Włoska, gambit Evansa przyjęty (główny)",
-  "r.bqk.nrpppp.ppp..n......Bb.p.......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, obrona klasyczna",
-  "r.bqk.nrpppp.ppp..n.....b...p.....B.P.....P..N..P..P.PPPRNBQK..Rw": "Partia Włoska, gambit Evansa przyjęty (główny)",
-  "r.bqk.nrpppp.ppp.bn.........p....PB.P........N..P.PP.PPPRNBQK..Rw": "Partia Włoska, gambit Evansa odrzucony",
-  "r.bqk.nrppppbppp..n.........p.....B.P........N..PPPP.PPPRNBQK..Rw": "Obrona Węgierska",
-  "r.bqkb.r..pp.pppp.n..n...p..p.......P....B...N..PPPP.PPPRNBQ.RK.b": "Partia Hiszpańska, neo-archangielski",
-  "r.bqkb.r..pp.pppp.n..n...p..p...B...P........N..PPPP.PPPRNBQ.RK.w": "Partia Hiszpańska, neo-archangielski",
-  "r.bqkb.r.pp..pppp.n........pp...B...n........N..PPPP.PPPRNBQR.K.w": "Partia Hiszpańska, kontratak Marshalla",
-  "r.bqkb.r.ppp.pppp.n.........p...B...n........N..PPPP.PPPRNBQR.K.b": "Partia Hiszpańska, kontratak Marshalla",
-  "r.bqkb.r.ppp.pppp.n..n......p...B...P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, neo-archangielski",
-  "r.bqkb.r.ppp.pppp.n..n...B..p.......P.....N..N..PPPP.PPPR.BQK..Rw": "Partia Czterech Skoczków, wariant Gunsberga",
-  "r.bqkb.rp.p..ppp..n..n...p.Pp.N...B.............PPPP.PPPRNBQK..Rw": "Obrona Dwóch Skoczków, wariant Ulvestada",
-  "r.bqkb.rpp...ppp..np.n......p......NP.....N.....PPP.BPPPR.BQK..Rw": "Sycylijska, wariant Bolesławskiego",
-  "r.bqkb.rpp..pppp..np.n.............NP.....N.....PPP.BPPPR.BQK..Rb": "Sycylijska, wariant Bolesławskiego",
-  "r.bqkb.rpp..pppp..np.n............BNP.....N.....PPP..PPPR.BQK..Rb": "Sycylijska, atak Sozina",
-  "r.bqkb.rpp..pppp..np.n........B....NP.....N.....PPP..PPPR..QKB.Rb": "Sycylijska, atak Richtera-Rauzera",
-  "r.bqkb.rpp.n.ppp..p.pn............pP......NBPN..PP...PPPR.BQK..Rw": "Obrona Słowiańska, wariant Merana",
-  "r.bqkb.rpp.n.ppp..p.pn.....p......PP......N.PN..PP...PPPR.BQKB.Rw": "Obrona Słowiańska, wariant Merana",
-  "r.bqkb.rpp.n.ppp..p.pn.....p......PP......NBPN..PP...PPPR.BQK..Rb": "Obrona Słowiańska, wariant Merana",
-  "r.bqkb.rpp.n.ppp..p.pn.....p..B...PP......N.P...PP...PPPR..QKBNRw": "Gambit Hetmański, wariant Cambridge Springs",
-  "r.bqkb.rpp.n.ppp..p.pn.....p..B...PP......N.PN..PP...PPPR..QKB.Rb": "Gambit Hetmański, wariant Cambridge Springs",
-  "r.bqkb.rpp.p.ppp..n..n......p......NP.....N.....PPP..PPPR.BQKB.Rw": "Obrona Sycylijska, wariant Swiesznikowa",
-  "r.bqkb.rpp.ppppp..n..n.............NP...........PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, wariant Swiesznikowa",
-  "r.bqkb.rpp.ppppp..n..n.............NP.....N.....PPP..PPPR.BQKB.Rb": "Obrona Sycylijska, wariant Swiesznikowa",
-  "r.bqkb.rppp..ppp.....n.....Pp.N...Bn............PPPP.PPPRNBQK..Rw": "Obrona Dwóch Skoczków, wariant Fritza",
-  "r.bqkb.rppp..ppp..n........np.N...B.............PPPP.PPPRNBQK..Rw": "Partia Włoska, atak Wątróbki (Fried Liver)",
-  "r.bqkb.rppp..ppp..n..n.....Pp.N...B.............PPPP.PPPRNBQK..Rb": "Obrona Dwóch Skoczków, wariant Ulvestada",
-  "r.bqkb.rppp..ppp..n..n.....pP.....Bp.........N..PPP..PPPRNBQK..Rw": "Obrona Dwóch Skoczków, wariant otwarty",
-  "r.bqkb.rppp..ppp..n..n.....pp.N...B.P...........PPPP.PPPRNBQK..Rw": "Obrona Dwóch Skoczków, wariant Ulvestada",
-  "r.bqkb.rpppn.ppp....pn.....p..B...PP......N.....PP..PPPPR..QKBNRw": "Gambit Hetmański, wariant Cambridge Springs",
-  "r.bqkb.rpppn.ppp....pn.....p..B...PP......N.P...PP...PPPR..QKBNRb": "Gambit Hetmański, wariant Cambridge Springs",
-  "r.bqkb.rpppp.Bpp..n..n......p.......P........N..PPPP.PPPRNBQK..Rb": "Gambit Jerome'a",
-  "r.bqkb.rpppp.ppp.....n...B..p......nP.....N..N..PPPP.PPPR.BQK..Rw": "Partia Czterech Skoczków, wariant Rubinsteina",
-  "r.bqkb.rpppp.ppp..n..n.............NP.....N.....PPP..PPPR.BQKB.Rb": "Partia Szkocka, wariant Czterech Skoczków",
-  "r.bqkb.rpppp.ppp..n..n............BpP........N..PPP..PPPRNBQK..Rw": "Obrona Dwóch Skoczków, wariant otwarty",
-  "r.bqkb.rpppp.ppp..n..n......N.......P.....N.....PPPP.PPPR.BQKB.Rb": "Partia Czterech Skoczków, gambit Halloween",
-  "r.bqkb.rpppp.ppp..n..n......P.....Bp.........N..PPP..PPPRNBQK..Rb": "Obrona Dwóch Skoczków, wariant otwarty",
-  "r.bqkb.rpppp.ppp..n..n......p.......P.....P..N..PP.P.PPPRNBQKB.Rw": "Debiut Ponzianiego, wariant Jaenischa",
-  "r.bqkb.rpppp.ppp..n..n......p......PP.....N..N..PPP..PPPR.BQKB.Rb": "Partia Czterech Skoczków, szkocka",
-  "r.bqkb.rpppp.ppp..n..n......p.....BPP........N..PPP..PPPRNBQK..Rb": "Obrona Dwóch Skoczków, wariant otwarty",
-  "r.bqkb.rpppp.ppp..n..n......p.....P.......N..N..PP.PPPPPR.BQKB.Rw": "Debiut Angielski, czterech skoczków",
-  "r.bqkb.rpppp.ppp..n..n......p.N...B.P...........PPPP.PPPRNBQK..Rb": "Obrona Dwóch Skoczków, wariant Ulvestada",
-  "r.bqkb.rpppp.ppp..n..n...B..p.......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, obrona Berlińska",
-  "r.bqkb.rpppp.ppp..n..n...B..p.......P.....N..N..PPPP.PPPR.BQK..Rb": "Partia Czterech Skoczków, wariant Gunsberga",
-  "r.bqkb.rppppnppp..n......B..p.......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, obrona Cozio",
-  "r.bqkbnr.pp..pppp.p.........p.......P........N..PPPP.PPPRNBQ.RK.b": "Partia Hiszpańska, wariant wymienny z roszadą",
-  "r.bqkbnr.pp..pppp.p.........p.......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, wariant wymienny z roszadą",
-  "r.bqkbnr.ppp.pppp.n.........p...B...P........N..PPPP.PPPRNBQK..Rb": "Partia Hiszpańska, neo-archangielski",
-  "r.bqkbnrpp...ppp..n.p.....ppP......P......P.....PP...PPPRNBQKBNRw": "Obrona Francuska, wariant posunięty (główny)",
-  "r.bqkbnrpp...ppp..n.p.....ppP......P......P..N..PP...PPPRNBQKB.Rb": "Obrona Francuska, wariant posunięty (główny)",
-  "r.bqkbnrpp.npppp..p................PN...........PPP..PPPR.BQKBNRw": "Obrona Caro-Kann, wariant Karpow",
-  "r.bqkbnrpp.p.ppp..n.........p......NP...........PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, wariant Kałasznikowa",
-  "r.bqkbnrpp.p.ppp..n.p..............NP...........PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, wariant Tajmanowa",
-  "r.bqkbnrpp.ppp.p..n...p............NP...........PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, przyśpieszony Smok",
-  "r.bqkbnrpp.ppppp..n................NP...........PPP..PPPRNBQKB.Rb": "Obrona Sycylijska, przyśpieszony Smok",
-  "r.bqkbnrpp.ppppp..n................pP........N..PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, przyśpieszony Smok",
-  "r.bqkbnrpp.ppppp..n.......p.........P.....N.....PPPP.PPPR.BQKBNRw": "Obrona Sycylijska, atak Grand Prix",
-  "r.bqkbnrpp.ppppp..n.......p.........PP....N.....PPPP..PPR.BQKBNRb": "Obrona Sycylijska, atak Grand Prix",
-  "r.bqkbnrpp.ppppp..n.......p........PP........N..PPP..PPPRNBQKB.Rb": "Obrona Sycylijska, przyśpieszony Smok",
-  "r.bqkbnrpp.ppppp..n......Bp.........P........N..PPPP.PPPRNBQK..Rb": "Obrona Sycylijska, wariant Rossolimo",
-  "r.bqkbnrppp..ppp..n.........P.....Pp.........N..PP..PPPPRNBQKB.Rw": "Kontratak Albina, wariant główny",
-  "r.bqkbnrppp..ppp..n........pp.......P.....P..N..PP.P.PPPRNBQKB.Rw": "Debiut Ponzianiego, kontra Caro",
-  "r.bqkbnrppp..ppp..n........pp.......PP....N.....PPPP..PPR.BQKBNRw": "Debiut Wiedeński, wariant Steinitza",
-  "r.bqkbnrppp..ppp..n........pp.....PP.........N..PP..PPPPRNBQKB.Rw": "Obrona Czigorina, łódzka",
-  "r.bqkbnrppp..ppp..np.....B..p.......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, obrona Steinitza",
-  "r.bqkbnrppp.pppp..n........p......PP............PP..PPPPRNBQKBNRw": "Obrona Czigorina, łódzka",
-  "r.bqkbnrpppn.ppp...p........p......PP........N..PPP..PPPRNBQKB.Rw": "Obrona Philidora, wariant Hanhama",
-  "r.bqkbnrpppp..pp..n......B..pp......P........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, gambit Schliemanna",
-  "r.bqkbnrpppp.p.p..n...p.....p.......P.....N..N..PPPP.PPPR.BQKB.Rw": "Debiut Trzech Skoczków, wariant Steinitza",
-  "r.bqkbnrpppp.ppp............p.....BnP........N..PPPP.PPPRNBQK..Rw": "Gambit Shillinga (Blackburne)",
-  "r.bqkbnrpppp.ppp.........B..p......nP........N..PPPP.PPPRNBQK..Rw": "Partia Hiszpańska, obrona Birda",
-  "r.bqkbnrpppp.ppp..n.................P.....N..N..PP...PPPR.BQKB.Rb": "Partia Szkocka, Göring przyjęty (główny)",
-  "r.bqkbnrpppp.ppp..n.................P.....p..N..PP...PPPRNBQKB.Rw": "Partia Szkocka, Göring przyjęty (główny)",
-  "r.bqkbnrpppp.ppp..n................NP...........PPP..PPPRNBQKB.Rb": "Partia Szkocka, wariant Pottera",
-  "r.bqkbnrpppp.ppp..n...............BpP........N..PPP..PPPRNBQK..Rb": "Gambit Szkocki",
-  "r.bqkbnrpppp.ppp..n.........p.......P........N..PPPP.PPPRNBQKB.Rw": "Debiut Ponzianiego, kontra Caro",
-  "r.bqkbnrpppp.ppp..n.........p.......P.....N.....PPPP.PPPR.BQKBNRw": "Debiut Wiedeński, wariant Steinitza",
-  "r.bqkbnrpppp.ppp..n.........p.......P.....P..N..PP.P.PPPRNBQKB.Rb": "Debiut Ponzianiego, kontra Caro",
-  "r.bqkbnrpppp.ppp..n.........p.......PP....N.....PPPP..PPR.BQKBNRb": "Debiut Wiedeński, wariant Steinitza",
-  "r.bqkbnrpppp.ppp..n.........p......PP...........PPP..PPPRNBQKBNRw": "Obrona Nimzowitscha, wariant Kennedy'ego",
-  "r.bqkbnrpppp.ppp..n.........p......PP........N..PPP..PPPRNBQKB.Rb": "Partia Szkocka, Göring przyjęty (główny)",
-  "r.bqkbnrpppp.ppp..n......B..p.......P........N..PPPP.PPPRNBQK..Rb": "Partia Hiszpańska, neo-archangielski",
-  "r.bqkbnrppppp.pp..n..........p......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Nimzowitscha, gambit Kolorado",
-  "rn.qkb.rp.pp.pppbp..pn............PP.........NP.PP..PP.PRNBQKB.Rw": "Obrona Hetmańsko-indyjska, wariant klasyczny",
-  "rn.qkb.rppp.pppp.....n.....p.b.....P.B......P...PPP..PPPRN.QKBNRw": "System Londyński nowoczesny",
-  "rn.qkbnrpp..pppp..p..........b.....P..........N.PPP..PPPR.BQKBNRb": "Obrona Caro-Kann, klasyczny (główny)",
-  "rn.qkbnrpp..pppp..p..........b.....PN...........PPP..PPPR.BQKBNRw": "Obrona Caro-Kann, klasyczny (główny)",
-  "rn.qkbnrpp..pppp..p...b............P..........N.PPP..PPPR.BQKBNRw": "Obrona Caro-Kann, klasyczny (główny)",
-  "rnb.kb.r.p...ppppq.ppn........B....NPP....N.....PPP...PPR..QKB.Rw": "Sycylijska, Najdorf i zatruty pion",
-  "rnb.kb.rppp.pppp.....n..q..........P......N.....PPP..PPPR.BQKBNRw": "Obrona Skandynawska, wariant główny",
-  "rnb.kb.rppp.pppp.....n..q..........P......N..N..PPP..PPPR.BQKB.Rb": "Obrona Skandynawska, wariant główny",
-  "rnb.kbnrppp..ppp...........qp................N..PPPP.PPPRNBQKB.Rw": "Gambit Słonia, wariant Maróczyego",
-  "rnb.kbnrppp.pppp........q.................N.....PPPP.PPPR.BQKBNRw": "Obrona Skandynawska, wariant główny",
-  "rnb.kbnrppp.pppp........q..........P......N.....PPP..PPPR.BQKBNRb": "Obrona Skandynawska, wariant główny",
-  "rnb.kbnrpppp.ppp............p.......PP.q........PPPP..PPRNBQKBNRw": "Gambit Królewski, obrona Keene'a",
-  "rnb.kbnrppppqppp....................Pp.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, wariant Norwala",
-  "rnb.kbnrppppqppp............p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Gunderama",
-  "rnbq.rk...p.bpppp..p.n...p..p.......P....BP..N.PPP.P.PP.RNBQR.K.w": "Partia Hiszpańska, wariant Breyera",
-  "rnbq.rk.pp..ppbp...p.np...p.......PPP.....N.BP..PP....PPR..QKBNRw": "Obrona Królewsko-indyjska, Sämisch (główny)",
-  "rnbq.rk.ppp..pbp...p.np.....p.....PPP.....N..N..PP..BPPPR.BQ.RK.b": "Obrona Królewsko-indyjska, Mar del Plata",
-  "rnbq.rk.ppp..ppp....pn.....p.....bPP......NBP...PP...PPPR.BQK.NRw": "Obrona Nimzo-indyjska, klasyczny (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPP.....N.....PP..BPPPR.BQK.NRw": "Obrona Królewsko-indyjska, wariant Awerbacha",
-  "rnbq.rk.ppp.ppbp...p.np...........PPP.....N...P.PP...P.PR.BQKBNRw": "Obrona Królewsko-indyjska, fianchetto (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPP.....N...P.PP...PBPR.BQK.NRb": "Obrona Królewsko-indyjska, fianchetto (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPP.....N..P..PP....PPR.BQKBNRw": "Obrona Królewsko-indyjska, Sämisch (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPP.....N.BP..PP....PPR..QKBNRb": "Obrona Królewsko-indyjska, Sämisch (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPPP....N.....PP....PPR.BQKBNRw": "Obrona Królewsko-indyjska, Cztery Piony (główny)",
-  "rnbq.rk.ppp.ppbp...p.np...........PPPP....N..N..PP....PPR.BQKB.Rb": "Obrona Królewsko-indyjska, Cztery Piony (główny)",
-  "rnbq.rk.ppp.ppbp...p.np.......B...PPP.....N.....PP..BPPPR..QK.NRb": "Obrona Królewsko-indyjska, wariant Awerbacha",
-  "rnbq.rk.pppp.ppp....pn...........bPP......N.P...PP...PPPR.BQKBNRw": "Obrona Nimzo-indyjska, klasyczny (główny)",
-  "rnbq.rk.pppp.ppp....pn...........bPP......NBP...PP...PPPR.BQK.NRb": "Obrona Nimzo-indyjska, klasyczny (główny)",
-  "rnbq.rk.ppppp.bp.....np......p.....P.........NP.PPP.PPBPRNBQ.RK.w": "Obrona Holenderska, leningradzki (główny)",
-  "rnbqk..rpp..ppbp...p.np............NP.....N.B...PPP..PPPR..QKB.Rw": "Sycylijska, Smok jugosłowiański",
-  "rnbqk..rpp..ppbp...p.np............NP.....N.BP..PPP...PPR..QKB.Rb": "Sycylijska, Smok jugosłowiański",
-  "rnbqk..rpp.p.ppp....pn....p.......PP....P.P.........PPPPR.BQKBNRw": "Obrona Nimzo-indyjska, Sämisch (główny)",
-  "rnbqk..rpp.p.ppp....pn....p......bPP......N.P...PP...PPPR.BQKBNRw": "Obrona Nimzo-indyjska, wariant Hübnera",
-  "rnbqk..rppp..ppp....pn.....p..B..bPP......N.....PP..PPPPR..QKBNRw": "Gambit Hetmański, wariant Ragozina",
-  "rnbqk..rppp.bpp.....pn.p...p......PP...B..N.P...PP...PPPR..QKBNRb": "Gambit Hetmański, obrona Laskera",
-  "rnbqk..rppp.bppp....pn.....p......PP..........P.PP..PPBPRNBQK.NRw": "Partia Katalońska zamknięta",
-  "rnbqk..rppp.bppp....pn.....p......PP.........NP.PP..PPBPRNBQK..Rb": "Partia Katalońska zamknięta",
-  "rnbqk..rppp.bppp....pn.....p..B...PP......N.....PP..PPPPR..QKBNRw": "Gambit Hetmański, obrona Laskera",
-  "rnbqk..rppp.ppbp......p............PP.....P.....P....PPPR.BQKBNRw": "Obrona Grünfelda, wymienny (główny)",
-  "rnbqk..rppp.ppbp.....np....p......PP.....QN..N..PP..PPPPR.B.KB.Rb": "Obrona Grünfelda, wariant rosyjski",
-  "rnbqk..rppp.ppbp.....np....p....Q.PP......N..N..PP..PPPPR.B.KB.Rb": "Obrona Grünfelda, wariant sztokholmski",
-  "rnbqk..rppp.ppbp...p.np............PP.....N..N..PPP..PPPR.BQKB.Rw": "Obrona Pirca, atak 150",
-  "rnbqk..rppp.ppbp...p.np............PP.....N.BN..PPP..PPPR..QKB.Rb": "Obrona Pirca, atak 150",
-  "rnbqk..rppp.ppbp...p.np...........PPP.....N.....PP...PPPR.BQKBNRw": "Obrona Królewsko-indyjska, Cztery Piony (główny)",
-  "rnbqk..rppp.ppbp...p.np...........PPP.....N.....PP..BPPPR.BQK.NRb": "Obrona Królewsko-indyjska, wariant Awerbacha",
-  "rnbqk..rppp.ppbp...p.np...........PPP.....N..N..PP...PPPR.BQKB.Rb": "Obrona Królewsko-indyjska, Mar del Plata",
-  "rnbqk..rpppp.ppp....pn............PP....P.P.........PPPPR.BQKBNRb": "Obrona Nimzo-indyjska, Sämisch (główny)",
-  "rnbqk..rpppp.ppp....pn............PP....P.b......P..PPPPR.BQKBNRw": "Obrona Nimzo-indyjska, Sämisch (główny)",
-  "rnbqk..rpppp.ppp....pn...........bPP.........N..PP.BPPPPRN.QKB.Rb": "Obrona Bogo-indyjska, wariant główny",
-  "rnbqk..rpppp.ppp....pn...........bPP......N.P...PP...PPPR.BQKBNRb": "Obrona Nimzo-indyjska, wariant Hübnera",
-  "rnbqk..rppppp.bp.....np......p.....P.........NP.PPP.PPBPRNBQ.RK.b": "Obrona Holenderska, leningradzki (główny)",
-  "rnbqk..rppppp.bp.....np......p.....P.........NP.PPP.PPBPRNBQK..Rw": "Obrona Holenderska, leningradzki (główny)",
-  "rnbqk..rppppppbp.....np...........PP......N.....PP..PPPPR.BQKBNRw": "Obrona Królewsko-indyjska, Cztery Piony (główny)",
-  "rnbqk..rppppppbp.....np...........PPP.....N.....PP...PPPR.BQKBNRb": "Obrona Królewsko-indyjska, Cztery Piony (główny)",
-  "rnbqk.nrpp...ppp....p.....ppP....b.P......N.....PPP..PPPR.BQKBNRw": "Obrona Francuska, Winawer (główny)",
-  "rnbqk.nrppp..ppp..........bpp.....B.P.....P.....PP.P.PPPRNBQK.NRw": "Debiut Gońca, kontragambit Lewisa",
-  "rnbqk.nrppp..ppp....p......pP....b.P......N.....PPP..PPPR.BQKBNRb": "Obrona Francuska, Winawer (główny)",
-  "rnbqk.nrppp..ppp...p......b.p.......PP.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, obrona nowoczesna",
-  "rnbqk.nrpppp.ppp..........b.p.......P........N..PPPP.PPPRNBQKB.Rw": "Gambit Buscha-Gassa",
-  "rnbqk.nrpppp.ppp..........b.p.......PP.......N..PPPP..PPRNBQKB.Rb": "Gambit Królewski, obrona nowoczesna",
-  "rnbqk.nrpppp.ppp..........b.p.....B.P...........PPPP.PPPRNBQK.NRw": "Debiut Gońca, kontragambit Lewisa",
-  "rnbqk.nrpppp.ppp..........b.p.....B.P.....P.....PP.P.PPPRNBQK.NRb": "Debiut Gońca, kontragambit Lewisa",
-  "rnbqk.nrpppp.ppp...b........p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Żółwia",
-  "rnbqk.nrppppbppp....................Pp.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, obrona Cunninghama",
-  "rnbqk.nrppppppbp......p............PP...........PPP..PPPRNBQKBNRw": "Obrona Nowoczesna, wariant główny",
-  "rnbqkb.r...pppppp....n...PpP....................PP..PPPPRNBQKBNRw": "Gambit Wołżański przyjęty",
-  "rnbqkb.r.p...pppp..ppn........B....NP.....N.....PPP..PPPR..QKB.Rw": "Sycylijska, Najdorf i zatruty pion",
-  "rnbqkb.r.p...pppp..ppn........B....NPP....N.....PPP...PPR..QKB.Rb": "Sycylijska, Najdorf i zatruty pion",
-  "rnbqkb.r.p..ppppp..p.n........B....NP.....N.....PPP..PPPR..QKB.Rb": "Sycylijska, Najdorf i zatruty pion",
-  "rnbqkb.r.p..ppppp.p..n.....p......PP......N..N..PP..PPPPR.BQKB.Rw": "Obrona Słowiańska, wariant Czebanienki",
-  "rnbqkb.rp..ppppp.....n...PpP....................PP..PPPPRNBQKBNRb": "Gambit Wołżański przyjęty",
-  "rnbqkb.rp.pp.ppp.p..pn.............P........PN..PPP..PPPRNBQKB.Rw": "System Zukertorta",
-  "rnbqkb.rp.pp.ppp.p..pn............PP.........NP.PP..PP.PRNBQKB.Rb": "Obrona Hetmańsko-indyjska, wariant klasyczny",
-  "rnbqkb.rpp....pp..p.pn.....p.p....PP.........NP.PP..PPBPRNBQK..Rw": "Obrona Holenderska, Stonewall (główny)",
-  "rnbqkb.rpp...p.p...p.np...pP..............N..NP.PP..PP.PR.BQKB.Rb": "Obrona Benoni, fianchetto",
-  "rnbqkb.rpp...ppp....pn....p.......BP........PN..PP...PPPRNBQK..Rw": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkb.rpp...ppp....pn....pp.......P.......BPN..PPP..PPPRNBQK..Rw": "System Collego, wariant główny",
-  "rnbqkb.rpp...ppp...p.n....pPp.....P.......N.....PP..PPPPR.BQKBNRw": "Obrona Benoni, czeski (główny)",
-  "rnbqkb.rpp...ppp...p.n....pPp.....P.P.....N.....PP...PPPR.BQKBNRb": "Obrona Benoni, czeski (główny)",
-  "rnbqkb.rpp...ppp...ppn.............NP.....N.....PPP..PPPR.BQKB.Rw": "Obrona Sycylijska, wariant Scheveningen",
-  "rnbqkb.rpp...ppp..p..p.............P............PPP..PPPR.BQKBNRw": "Obrona Caro-Kann, wariant Bronsteina-Larsena",
-  "rnbqkb.rpp...ppp..p.pn.....p......PP......N.PN..PP...PPPR.BQKB.Rb": "Obrona Słowiańska, wariant Merana",
-  "rnbqkb.rpp...ppp..p.pn.....p..B...PP......N.....PP..PPPPR..QKBNRw": "Gambit Hetmański, gambit Marshalla",
-  "rnbqkb.rpp...ppp..p.pn.....p..B...PPP.....N.....PP...PPPR..QKBNRb": "Gambit Hetmański, gambit Marshalla",
-  "rnbqkb.rpp..pp.p...p.np............NP.....N.....PPP..PPPR.BQKB.Rw": "Sycylijska, atak Levenfisha",
-  "rnbqkb.rpp..pp.p...p.np............NP.....N.B...PPP..PPPR..QKB.Rb": "Sycylijska, Smok jugosłowiański",
-  "rnbqkb.rpp..pp.p...p.np............NPP....N.....PPP...PPR.BQKB.Rb": "Sycylijska, atak Levenfisha",
-  "rnbqkb.rpp..pp.p..p..np....p......PP......N..N..PP..PPPPR.BQKB.Rw": "Obrona Słowiańska, wariant Schlechtera",
-  "rnbqkb.rpp..pp.p..p..np....p......PP......N.P...PP...PPPR.BQKBNRw": "Obrona Słowiańska, wariant Steinera",
-  "rnbqkb.rpp..pppp.....n....pp.......P.B......P...PPP..PPPRN.QKBNRw": "System Londyński z ...c5",
-  "rnbqkb.rpp..pppp...p.n....pP......P.............PP..PPPPRNBQKBNRw": "Obrona Benoni, blokada",
-  "rnbqkb.rpp..pppp..p..N.............P............PPP..PPPR.BQKBNRb": "Obrona Caro-Kann, wariant Bronsteina-Larsena",
-  "rnbqkb.rpp..pppp..p..n.............PN...........PPP..PPPR.BQKBNRw": "Obrona Caro-Kann, wariant Bronsteina-Larsena",
-  "rnbqkb.rpp..pppp..p..n............pPP.....N..N..PP...PPPR.BQKB.Rb": "Obrona Słowiańska, gambit Gellera",
-  "rnbqkb.rpp..pppp..p..n.....p......PP......N.....PP..PPPPR.BQKBNRw": "Obrona Słowiańska, wariant Steinera",
-  "rnbqkb.rpp..pppp..p..n.....p......PP......N.P...PP...PPPR.BQKBNRb": "Obrona Słowiańska, wariant Steinera",
-  "rnbqkb.rpp.p.ppp.....n....pPp.....P.......N.....PP..PPPPR.BQKBNRb": "Obrona Benoni, czeski (główny)",
-  "rnbqkb.rpp.ppppp.....n....p.........P........N..PPPP.PPPRNBQKB.Rw": "Sycylijska, wariant Nimzowitscha",
-  "rnbqkb.rpp.ppppp.....n....p.......PP............PP..PPPPRNBQKBNRw": "Obrona Benoni, blokada",
-  "rnbqkb.rpp.ppppp.....n....pP......P.............PP..PPPPRNBQKBNRb": "Obrona Benoni, blokada",
-  "rnbqkb.rppp...pp....pn.....p.p....PP.........NP.PP..PPBPRNBQK..Rb": "Obrona Holenderska, Stonewall (główny)",
-  "rnbqkb.rppp..Npp...p.n..............P...........PPPP.PPPRNBQKB.Rb": "Obrona Rosyjska, gambit Cochranea",
-  "rnbqkb.rppp..ppp...........np.............N...P.PP.PPP.PR.BQKBNRw": "Debiut Angielski, odwrócony Smok",
-  "rnbqkb.rppp..ppp.....n.....Pp.............N...P.PP.PPP.PR.BQKBNRb": "Debiut Angielski, odwrócony Smok",
-  "rnbqkb.rppp..ppp.....n.....pp.......PP....N.....PPPP..PPR.BQKBNRw": "Debiut Wiedeński, Falkbeer wiedeński",
-  "rnbqkb.rppp..ppp.....n.....pp.....P.......N...P.PP.PPP.PR.BQKBNRw": "Debiut Angielski, odwrócony Smok",
-  "rnbqkb.rppp..ppp....pn............BP........PN..PP...PPPRNBQK..Rb": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkb.rppp..ppp....pn............pP..........P.PP..PPBPRNBQK.NRw": "Partia Katalońska otwarta",
-  "rnbqkb.rppp..ppp....pn............pP........PN..PP...PPPRNBQKB.Rw": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkb.rppp..ppp....pn........B...pP......N.....PP..PPPPR..QKBNRw": "Gambit Hetmański, wariant wiedeński",
-  "rnbqkb.rppp..ppp....pn.....p.................NP.PPPPPPBPRNBQ.RK.b": "Atak Królewsko-indyjski (KIA)",
-  "rnbqkb.rppp..ppp....pn.....p.................NP.PPPPPPBPRNBQK..Rw": "Atak Królewsko-indyjski (KIA)",
-  "rnbqkb.rppp..ppp....pn.....p.......P........PN..PPP..PPPRNBQKB.Rw": "System Collego, wariant główny",
-  "rnbqkb.rppp..ppp....pn.....p.......P.......BPN..PPP..PPPRNBQK..Rb": "System Collego, wariant główny",
-  "rnbqkb.rppp..ppp....pn.....p......PP......N.....PP..PPPPR.BQKBNRw": "Gambit Hetmański odrzucony (kolejność Nimzo)",
-  "rnbqkb.rppp..ppp....pn.....p......PPP.....N.....PP...PPPR.BQKBNRb": "Gambit Hetmański, gambit Marshalla (pełny)",
-  "rnbqkb.rppp..ppp....pn.....p..B...PP......N.....PP..PPPPR..QKBNRb": "Gambit Hetmański, gambit Marshalla",
-  "rnbqkb.rppp..ppp....pn.....pP......P......N.....PPP..PPPR.BQKBNRb": "Obrona Francuska, klasyczny (główny)",
-  "rnbqkb.rppp..ppp...p.n......p......PP........N..PPP..PPPRNBQKB.Rw": "Obrona Philidora, wariant główny",
-  "rnbqkb.rppp.pp.p......p............PP.....P.....P....PPPR.BQKBNRb": "Obrona Grünfelda, wymienny (główny)",
-  "rnbqkb.rppp.pp.p......p............PP.....n.....PP...PPPR.BQKBNRw": "Obrona Grünfelda, wymienny (główny)",
-  "rnbqkb.rppp.pp.p.....np....p......PP.B....N.....PP..PPPPR..QKBNRb": "Obrona Grünfelda, wariant węgierski",
-  "rnbqkb.rppp.pp.p...p.np............PPP....N.....PPP...PPR.BQKBNRb": "Obrona Pirca, atak austriacki",
-  "rnbqkb.rppp.pp.p.n....p............PP.....N.....PP...PPPR.BQKBNRw": "Obrona Grünfelda, wariant wymienny",
-  "rnbqkb.rppp.pppp.....n.............P......N..p..PPP...PPR.BQKBNRw": "Gambit Blackmara-Diemera przyjęty",
-  "rnbqkb.rppp.pppp.....n.............Pp.....N.....PPP..PPPR.BQKBNRw": "Gambit Blackmara-Diemera przyjęty",
-  "rnbqkb.rppp.pppp.....n.............Pp.....N..P..PPP...PPR.BQKBNRb": "Gambit Blackmara-Diemera przyjęty",
-  "rnbqkb.rppp.pppp.....n............pP.........N..PP..PPPPRNBQKB.Rw": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkb.rppp.pppp.....n............pP........PN..PP...PPPRNBQKB.Rb": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkb.rppp.pppp.....n.....P....................PPPP.PPPRNBQKBNRw": "Obrona Skandynawska, wariant nowoczesny",
-  "rnbqkb.rppp.pppp.....n.....p.................NP.PPPPPP.PRNBQKB.Rw": "Atak Królewsko-indyjski (KIA)",
-  "rnbqkb.rppp.pppp.....n.....p.................NP.PPPPPPBPRNBQK..Rb": "Atak Królewsko-indyjski (KIA)",
-  "rnbqkb.rppp.pppp.....n.....p.......PP.....N.....PPP..PPPR.BQKBNRb": "Gambit Blackmara-Diemera",
-  "rnbqkb.rppp.pppp.....n.....p..B....P......N.....PPP.PPPPR..QKBNRb": "Debiut Veresova",
-  "rnbqkb.rppp.pppp...p.......nP......P.........N..PPP..PPPRNBQKB.Rb": "Obrona Alechina, wariant nowoczesny",
-  "rnbqkb.rppp.pppp...p.n.............P.........N..PPP.PPPPRNBQKB.Rw": "Obrona Wade'a",
-  "rnbqkb.rppp.pppp.n.P..............PP............PP...PPPRNBQKBNRb": "Obrona Alechina, wariant wymienny",
-  "rnbqkb.rppp.pppp.n.p........P.....PP.P..........PP....PPRNBQKBNRb": "Obrona Alechina, wariant Czterech Pionów",
-  "rnbqkb.rpppn.ppp....p......pP......P......N.....PPP..PPPR.BQKBNRw": "Obrona Francuska, klasyczny (główny)",
-  "rnbqkb.rpppp..pp....pn.......p....PP......N.....PP..PPPPR.BQKBNRw": "Obrona Holenderska, wariant z Sc3",
-  "rnbqkb.rpppp.p.p.....np.....p.....P.......N...P.PP.PPP.PR.BQKBNRw": "Debiut Angielski, system Botwinnika",
-  "rnbqkb.rpppp.pp.....pn.p...........PP..B........PPP..PPPRN.QKBNRb": "Atak Trompowskiego, wariant główny",
-  "rnbqkb.rpppp.pp.....pn.p......B....PP...........PPP..PPPRN.QKBNRw": "Atak Trompowskiego, wariant główny",
-  "rnbqkb.rpppp.ppp............P.....P...n.........PP..PPPPRNBQKBNRw": "Gambit Budapeszteński, wariant główny",
-  "rnbqkb.rpppp.ppp............P.....P.n...........PP..PPPPRNBQKBNRw": "Gambit Budapeszteński, wariant Fajarowicza",
-  "rnbqkb.rpppp.ppp............p.....B.n........N..PPPP.PPPRNBQ.RK.b": "Debiut Gońca, gambit Bodena-Kieseritzkyego",
-  "rnbqkb.rpppp.ppp............p.....B.n........N..PPPP.PPPRNBQK..Rw": "Debiut Gońca, gambit Bodena-Kieseritzkyego",
-  "rnbqkb.rpppp.ppp............p.....B.n.....N.....PPPP.PPPR.BQK.NRw": "Debiut Wiedeński, wariant Hamppe-Meitnera",
-  "rnbqkb.rpppp.ppp.....n......p.......P.....N.....PPPP.PPPR.BQKBNRw": "Debiut Wiedeński, Pchła",
-  "rnbqkb.rpppp.ppp.....n......p.......P.....N...P.PPPP.P.PR.BQKBNRb": "Debiut Wiedeński, Pchła",
-  "rnbqkb.rpppp.ppp.....n......p......PP........N..PPP..PPPRNBQKB.Rb": "Obrona Rosyjska, atak nowoczesny",
-  "rnbqkb.rpppp.ppp.....n......p.....B.P........N..PPPP.PPPRNBQK..Rb": "Debiut Gońca, gambit Bodena-Kieseritzkyego",
-  "rnbqkb.rpppp.ppp.....n......p.....P...........P.PP.PPP.PRNBQKBNRw": "Debiut Angielski, atak królewsko-indyjski",
-  "rnbqkb.rpppp.ppp.....n......p.....P...........P.PP.PPPBPRNBQK.NRb": "Debiut Angielski, atak królewsko-indyjski",
-  "rnbqkb.rpppp.ppp.....n......p.....P.......N..N..PP.PPPPPR.BQKB.Rb": "Debiut Angielski, czterech skoczków",
-  "rnbqkb.rpppp.ppp.....n......p.....P.P.....N.....PP.P.PPPR.BQKBNRb": "Debiut Angielski, gambit Reversed",
-  "rnbqkb.rpppp.ppp.....n......p.....PP............PP..PPPPRNBQKBNRw": "Gambit Budapeszteński, wariant Fajarowicza",
-  "rnbqkb.rpppp.ppp....pn...................P......PBPPPPPPRN.QKBNRw": "Debiut Larsena, wariant klasyczny z Sf6",
-  "rnbqkb.rpppp.ppp....pn.............P........PN..PPP..PPPRNBQKB.Rb": "System Zukertorta",
-  "rnbqkb.rpppp.ppp....pn............P.......N.....PP.PPPPPR.BQKBNRw": "Debiut Angielski, wariant Mikenas-Carls",
-  "rnbqkb.rpppp.ppp....pn............P.P.....N.....PP.P.PPPR.BQKBNRb": "Debiut Angielski, wariant Mikenas-Carls",
-  "rnbqkb.rpppp.ppp....pn............PP..........P.PP..PP.PRNBQKBNRb": "Partia Katalońska zamknięta",
-  "rnbqkb.rpppp.ppp....pn............PP......N.....PP..PPPPR.BQKBNRb": "Gambit Hetmański odrzucony (kolejność Nimzo)",
-  "rnbqkb.rpppp.ppp....pn........B....P............PPP.PPPPRN.QKBNRw": "Atak Trompowskiego, wariant główny",
-  "rnbqkb.rpppp.ppp....pn........B....P.........N..PPP.PPPPRN.QKB.Rb": "Atak Torrego",
-  "rnbqkb.rpppp.ppp....pn........B....PP...........PPP..PPPRN.QKBNRb": "Atak Trompowskiego, wariant główny",
-  "rnbqkb.rppppnppp....................Pp.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, obrona Svenoniusa",
-  "rnbqkb.rppppnppp............p.......P........N..PPPP.PPPRNBQKB.Rw": "System Gleka",
-  "rnbqkb.rppppp..p.....np......p.....P..........P.PPP.PPBPRNBQK.NRw": "Obrona Holenderska, wariant leningradzki",
-  "rnbqkb.rppppp..p.....np......p.....P.........NP.PPP.PP.PRNBQKB.Rw": "Obrona Holenderska, leningradzki (główny)",
-  "rnbqkb.rppppp..p.....np......p.....P.........NP.PPP.PPBPRNBQK..Rb": "Obrona Holenderska, leningradzki (główny)",
-  "rnbqkb.rppppp.pp.....n.......p.....P..........P.PPP.PPBPRNBQK.NRb": "Obrona Holenderska, Stonewall (główny)",
-  "rnbqkb.rppppp.pp.....n.......p.....P.........N..PPP.PPPPRNBQKB.Rw": "Obrona Holenderska, wariant klasyczny",
-  "rnbqkb.rppppp.pp.....n.......p....PP............PP..PPPPRNBQKBNRw": "Obrona Holenderska, wariant z Sc3",
-  "rnbqkb.rppppp.pp.....n.......p....PP......N.....PP..PPPPR.BQKBNRb": "Obrona Holenderska, wariant z Sc3",
-  "rnbqkb.rpppppp.p.....np............P.B..........PPP.PPPPRN.QKBNRw": "System Londyński, fianchetto",
-  "rnbqkb.rpppppp.p.....np...........PP............PP..PPPPRNBQKBNRw": "Obrona Grünfelda, wariant sztokholmski",
-  "rnbqkb.rpppppp.p.....np...........PP......N.....PP..PPPPR.BQKBNRb": "Obrona Grünfelda, wariant sztokholmski",
-  "rnbqkb.rpppppppp..............B....Pn...........PPP.PPPPRN.QKBNRw": "Atak Trompowskiego, wariant klasyczny",
-  "rnbqkbnr.p.p.pppp...p..............NP...........PPP..PPPRNBQKB.Rw": "Obrona Sycylijska, wariant Kana",
-  "rnbqkbnr.p.pppppp.........p.........P........N..PPPP.PPPRNBQKB.Rw": "Sycylijska, wariant O'Kelly'ego",
-  "rnbqkbnrp.pp.ppp.........p..p.....B.P...........PPPP.PPPRNBQK.NRw": "Debiut Gońca, gambit Skrzydłowy",
-  "rnbqkbnrp.pp.ppp.p..........p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Kenilworth",
-  "rnbqkbnrp.pp.ppp.p..........p.....B.P...........PPPP.PPPRNBQK.NRw": "Debiut Gońca, obrona Anderssena",
-  "rnbqkbnrp.pp.ppp.p..p.............PP............PP..PPPPRNBQKBNRw": "Obrona Angielska",
-  "rnbqkbnrpp...ppp....p......P.......p......N.....PP..PPPPR.BQKBNRw": "Gambit Hetmański, wariant Henniga-Schary",
-  "rnbqkbnrpp...ppp....p.....pP.......P......N.....PP..PPPPR.BQKBNRb": "Gambit Hetmański, wariant Henniga-Schary",
-  "rnbqkbnrpp...ppp....p.....pp.......PP...........PPPN.PPPR.BQKBNRw": "Obrona Francuska, Tarrasch otwarty",
-  "rnbqkbnrpp...ppp....p.....ppP......P............PPP..PPPRNBQKBNRw": "Obrona Francuska, wariant posunięty (główny)",
-  "rnbqkbnrpp...ppp....p.....ppP......P......P.....PP...PPPRNBQKBNRb": "Obrona Francuska, wariant posunięty (główny)",
-  "rnbqkbnrpp...ppp..p........pp.....PP......N.....PP..PPPPR.BQKBNRw": "Obrona Słowiańska, kontragambit Winawera",
-  "rnbqkbnrpp..pppp...........p.......P............PP..PPPPRNBQKBNRw": "Obrona Słowiańska, wariant wymienny",
-  "rnbqkbnrpp..pppp...........p.......P............PPP..PPPRNBQKBNRw": "Obrona Caro-Kann, atak Panowa-Botwinnika",
-  "rnbqkbnrpp..pppp...........p......PP............PP...PPPRNBQKBNRb": "Obrona Caro-Kann, atak Panowa-Botwinnika",
-  "rnbqkbnrpp..pppp...p......p.........P........N..PPPP.PPPRNBQKB.Rw": "Sycylijska, Najdorf i zatruty pion",
-  "rnbqkbnrpp..pppp...p.....Bp.........P........N..PPPP.PPPRNBQK..Rb": "Obrona Sycylijska, wariant moskiewski",
-  "rnbqkbnrpp..pppp..p........P.......P............PP..PPPPRNBQKBNRb": "Obrona Słowiańska, wariant wymienny",
-  "rnbqkbnrpp.p.ppp..........p.p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Freda",
-  "rnbqkbnrpp.p.ppp..p.........p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona McLeoda",
-  "rnbqkbnrpp.p.ppp..p.........p.....B.P...........PPPP.PPPRNBQK.NRw": "Debiut Gońca, wariant Steina",
-  "rnbqkbnrpp.ppppp...................pP...........PPP..PPPRNBQKBNRw": "Obrona Sycylijska, gambit Morry",
-  "rnbqkbnrpp.ppppp...................pP.....P.....PP...PPPRNBQKBNRb": "Obrona Sycylijska, gambit Morry",
-  "rnbqkbnrppp..p.p...........p......B.Ppp......N..PPPP..PPRNBQ.RK.w": "Gambit Królewski, obrona Polerio",
-  "rnbqkbnrppp..ppp............P.....Pp............PP..PPPPRNBQKBNRw": "Kontratak Albina, wariant główny",
-  "rnbqkbnrppp..ppp............P.....Pp.........N..PP..PPPPRNBQKB.Rb": "Kontratak Albina, wariant główny",
-  "rnbqkbnrppp..ppp............p......Pp.....N.....PPP..PPPR.BQKBNRw": "Gambit Blackmara-Diemera, obrona Euwe",
-  "rnbqkbnrppp..ppp...........Pp................N..PPPP.PPPRNBQKB.Rb": "Gambit Słonia, wariant Maróczyego",
-  "rnbqkbnrppp..ppp...........p.......P............PP..PPPPRNBQKBNRw": "Gambit Hetmański, wariant wymienny",
-  "rnbqkbnrppp..ppp...........p.......P............PPP..PPPRNBQKBNRw": "Obrona Francuska, wariant wymienny (pełny)",
-  "rnbqkbnrppp..ppp...........p.......pP.....P.....PP...PPPRNBQKBNRw": "Gambit Duński, obrona Schlechtera",
-  "rnbqkbnrppp..ppp...........pP.....P.............PP..PPPPRNBQKBNRb": "Kontratak Albina, wariant główny",
-  "rnbqkbnrppp..ppp...........pp.................P.PPPPPPBPRNBQK.NRw": "Otwarcie Benko z ...e5",
-  "rnbqkbnrppp..ppp...........pp.......PP..........PPPP..PPRNBQKBNRw": "Gambit Królewski, kontrgambit Falkbeera",
-  "rnbqkbnrppp..ppp....p..............Pp.....N.....PPP..PPPR.BQKBNRw": "Obrona Francuska, wariant Rubinsteina",
-  "rnbqkbnrppp..ppp....p......P.......P............PP..PPPPRNBQKBNRb": "Gambit Hetmański, wariant wymienny",
-  "rnbqkbnrppp..ppp....p......p.......PP.....N.....PPP..PPPR.BQKBNRb": "Obrona Francuska, klasyczny (główny)",
-  "rnbqkbnrppp..ppp....p......pP......P............PPP..PPPRNBQKBNRb": "Obrona Francuska, wariant posunięty (główny)",
-  "rnbqkbnrppp..ppp...p........p.......P........N..PPPP.PPPRNBQKB.Rw": "Obrona Philidora, wariant główny",
-  "rnbqkbnrppp..ppp...p........p.....PP............PP..PPPPRNBQKBNRw": "Obrona Szczura",
-  "rnbqkbnrppp.pppp..........................N.....PPPP.PPPR.BQKBNRw": "Obrona Skandynawska, wariant Gubinskiego-Meltsa",
-  "rnbqkbnrppp.pppp..................Pp.........N..PP.PPPPPRNBQKB.Rw": "Debiut Rétiego, wariant posunięty",
-  "rnbqkbnrppp.pppp..................p..........N..PP.PPPPPRNBQKB.Rw": "Debiut Rétiego, gambit przyjęty",
-  "rnbqkbnrppp.pppp..................pP............PP..PPPPRNBQKBNRw": "Gambit Hetmański przyjęty, wariant stary",
-  "rnbqkbnrppp.pppp..................pP.........N..PP..PPPPRNBQKB.Rb": "Gambit Hetmański przyjęty, wariant klasyczny",
-  "rnbqkbnrppp.pppp..................pP........P...PP...PPPRNBQKBNRb": "Gambit Hetmański przyjęty, wariant stary",
-  "rnbqkbnrpppp..pp............Np......P...........PPPP.PPPRNBQKB.Rb": "Gambit Łotewski, wariant Młota",
-  "rnbqkbnrpppp..pp............p.......P...........PPPP.PPPRNBQKB.Rw": "Obrona Damiano, refutacja",
-  "rnbqkbnrpppp..pp............p..Q....P...........PPPP.PPPRNB.KB.Rb": "Obrona Damiano, refutacja",
-  "rnbqkbnrpppp..pp............pp....B.P...........PPPP.PPPRNBQK.NRw": "Debiut Gońca, kontragambit Kalabryjski",
-  "rnbqkbnrpppp..pp.....p......N.......P...........PPPP.PPPRNBQKB.Rb": "Obrona Damiano, refutacja",
-  "rnbqkbnrpppp.p.p..............N.....PppP........PPPP..P.RNBQKB.Rb": "Gambit Królewski, gambit Allgaiera",
-  "rnbqkbnrpppp.p.p..............p.....Pp.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, obrona Polerio",
-  "rnbqkbnrpppp.p.p..............p.....Pp....N..N..PPPP..PPR.BQKB.Rb": "Gambit Królewski, gambit Quaade",
-  "rnbqkbnrpppp.p.p............N.......PppP........PPPP..P.RNBQKB.Rb": "Gambit Królewski, wariant Kieseritzkyego",
-  "rnbqkbnrpppp.p.p......p.....p.......P........N..PPPP.PPPRNBQKB.Rw": "Wariant Sollera",
-  "rnbqkbnrpppp.pp........p............Pp.......N..PPPP..PPRNBQKB.Rw": "Gambit Królewski, obrona Beckera",
-  "rnbqkbnrpppp.ppp....................P.....p.....PP...PPPRNBQKBNRw": "Gambit Duński przyjęty",
-  "rnbqkbnrpppp.ppp....................Pp.......N..PPPP..PPRNBQKB.Rb": "Gambit Królewski, obrona Svenoniusa",
-  "rnbqkbnrpppp.ppp...................QP...........PPP..PPPRNB.KBNRb": "Partia Centralna",
-  "rnbqkbnrpppp.ppp...................pP.....P.....PP...PPPRNBQKBNRb": "Gambit Duński, obrona Schlechtera",
-  "rnbqkbnrpppp.ppp..................B.P...........Pp...PPPRNBQK.NRw": "Gambit Duński przyjęty",
-  "rnbqkbnrpppp.ppp..................B.P.....p.....PP...PPPRNBQK.NRb": "Gambit Duński przyjęty",
-};
 
-const OPENING_BOOK: { prefix: string[]; name: string }[] = [
-  // --- 1.e4: hiszpańskie i włoskie ---
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','g8f6'], name: 'Partia Hiszpańska, obrona Berlińska' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6'], name: 'Partia Hiszpańska, odroczony Steinitz' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5c6'], name: 'Partia Hiszpańska, wariant wymienny' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6'], name: "Partia Hiszpańska, wariant Morphy'ego (zamknięty)" },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5'], name: 'Partia Hiszpańska (Ruy Lopez)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','c2c3','g8f6','d2d3'], name: 'Partia Włoska, pianissimo' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','b2b4'], name: 'Partia Włoska, gambit Evansa' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5'], name: 'Partia Włoska (Giuoco Piano)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6'], name: 'Obrona Dwóch Skoczków' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8e7'], name: 'Obrona Węgierska' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4'], name: 'Partia Włoska' },
-  // --- 1.e4: szkockie, skoczkowe, centralne ---
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','g8f6','b1c3'], name: 'Partia Szkocka, wariant Czterech Skoczków' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4'], name: 'Partia Szkocka' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','c2c3'], name: 'Partia Szkocka, gambit Göringa' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4'], name: 'Partia Szkocka' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6','f1b5','f8b4'], name: 'Partia Czterech Skoczków, hiszpańska' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6','d2d4'], name: 'Partia Czterech Skoczków, szkocka' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6'], name: 'Partia Czterech Skoczków' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3'], name: 'Debiut Trzech Skoczków' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','c2c3'], name: 'Debiut Ponzianiego' },
-  { prefix: ['e2e4','e7e5','d2d4','e5d4','d1d4'], name: 'Partia Centralna' },
-  { prefix: ['e2e4','e7e5','d2d4','e5d4','c2c3'], name: 'Gambit Duński' },
-  // --- 1.e4: gambit królewski, Wiedeń, goniec ---
-  { prefix: ['e2e4','e7e5','f2f4','e5f4'], name: 'Gambit Królewski przyjęty' },
-  { prefix: ['e2e4','e7e5','f2f4','f8c5'], name: 'Gambit Królewski odrzucony (klasyczny)' },
-  { prefix: ['e2e4','e7e5','f2f4','d7d5'], name: 'Gambit Królewski, kontrgambit Falkbeera' },
-  { prefix: ['e2e4','e7e5','f2f4'], name: 'Gambit Królewski' },
-  { prefix: ['e2e4','e7e5','b1c3','g8f6','f2f4'], name: 'Debiut Wiedeński, gambit' },
-  { prefix: ['e2e4','e7e5','b1c3'], name: 'Debiut Wiedeński' },
-  { prefix: ['e2e4','e7e5','f1c4','g8f6'], name: 'Debiut Gońca Królewskiego, obrona Berlińska' },
-  { prefix: ['e2e4','e7e5','f1c4'], name: 'Debiut Gońca Królewskiego' },
-  // --- 1.e4: półotwarte czarne ---
-  { prefix: ['e2e4','e7e5','g1f3','d7d6'], name: 'Obrona Philidora' },
-  { prefix: ['e2e4','e7e5','g1f3','g8f6','f3e5','d7d6'], name: 'Obrona Rosyjska (Petrowa), wariant klasyczny' },
-  { prefix: ['e2e4','e7e5','g1f3','g8f6'], name: 'Obrona Rosyjska (Petrowa)' },
-  { prefix: ['e2e4','e7e5','g1f3','f7f5'], name: 'Gambit Łotewski' },
-  { prefix: ['e2e4','e7e5','g1f3','d7d5'], name: 'Gambit Słonia' },
-  { prefix: ['e2e4','e7e5','g1f3','f7f6'], name: 'Obrona Damiano' },
-  // --- Francuska ---
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1c3','f8b4'], name: 'Obrona Francuska, wariant Winawera' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1c3','g8f6'], name: 'Obrona Francuska, wariant klasyczny' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1d2'], name: 'Obrona Francuska, wariant Tarrascha' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1c3','d5e4'], name: 'Obrona Francuska, wariant Rubinsteina' },
-  { prefix: ['e2e4','e7e6','e4e5'], name: 'Obrona Francuska, wariant posunięty' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','e4d5'], name: 'Obrona Francuska, wariant wymienny' },
-  { prefix: ['e2e4','e7e6','d2d4'], name: 'Obrona Francuska' },
-  { prefix: ['e2e4','e7e6'], name: 'Obrona Francuska' },
-  // --- Caro-Kann ---
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','b1c3','d5e4','c3e4'], name: 'Obrona Caro-Kann, wariant klasyczny' },
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','e4d5','c6d5','c2c4'], name: 'Obrona Caro-Kann, atak Panowa-Botwinnika' },
-  { prefix: ['e2e4','c7c6','e4e5'], name: 'Obrona Caro-Kann, wariant posunięty' },
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','e4d5'], name: 'Obrona Caro-Kann, wariant wymienny' },
-  { prefix: ['e2e4','c7c6','f2f3'], name: 'Obrona Caro-Kann, wariant Fantasy' },
-  { prefix: ['e2e4','c7c6','d2d4'], name: 'Obrona Caro-Kann' },
-  { prefix: ['e2e4','c7c6'], name: 'Obrona Caro-Kann' },
-  // --- Sycylijska ---
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','a7a6'], name: 'Obrona Sycylijska, wariant Najdorfa' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','g7g6'], name: 'Obrona Sycylijska, Wariant Smoka' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','e7e6'], name: 'Obrona Sycylijska, wariant Scheveningen' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','b8c6'], name: 'Obrona Sycylijska, wariant klasyczny' },
-  { prefix: ['e2e4','c7c5','g1f3','b8c6','d2d4','c5d4','f3d4','g8f6','b1c3','e7e5'], name: 'Obrona Sycylijska, wariant Swiesznikowa' },
-  { prefix: ['e2e4','c7c5','g1f3','b8c6','d2d4','c5d4','f3d4','e7e5'], name: 'Obrona Sycylijska, wariant Kałasznikowa' },
-  { prefix: ['e2e4','c7c5','g1f3','b8c6','d2d4','c5d4','f3d4','g7g6'], name: 'Obrona Sycylijska, przyśpieszony Smok' },
-  { prefix: ['e2e4','c7c5','g1f3','e7e6','d2d4','c5d4','f3d4','a7a6'], name: 'Obrona Sycylijska, wariant Kana' },
-  { prefix: ['e2e4','c7c5','g1f3','e7e6','d2d4','c5d4','f3d4','b8c6'], name: 'Obrona Sycylijska, wariant Tajmanowa' },
-  { prefix: ['e2e4','c7c5','g1f3','b8c6','f1b5'], name: 'Obrona Sycylijska, wariant Rossolimo' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','f1b5'], name: 'Obrona Sycylijska, wariant moskiewski' },
-  { prefix: ['e2e4','c7c5','d2d4','c5d4','c2c3'], name: 'Obrona Sycylijska, gambit Morry' },
-  { prefix: ['e2e4','c7c5','b1c3','b8c6','f2f4'], name: 'Obrona Sycylijska, atak Grand Prix' },
-  { prefix: ['e2e4','c7c5','c2c3'], name: 'Obrona Sycylijska, wariant Ałapina' },
-  { prefix: ['e2e4','c7c5','b1c3'], name: 'Obrona Sycylijska zamknięta' },
-  { prefix: ['e2e4','c7c5'], name: 'Obrona Sycylijska' },
-  // --- pozostałe vs 1.e4 ---
-  { prefix: ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6'], name: 'Obrona Pirca' },
-  { prefix: ['e2e4','g7g6'], name: 'Obrona Nowoczesna' },
-  { prefix: ['e2e4','d7d5','e4d5','d8d5','b1c3','d5a5'], name: 'Obrona Skandynawska, wariant główny' },
-  { prefix: ['e2e4','d7d5','e4d5','g8f6'], name: 'Obrona Skandynawska, wariant nowoczesny' },
-  { prefix: ['e2e4','d7d5'], name: 'Obrona Skandynawska' },
-  { prefix: ['e2e4','g8f6','e4e5','f6d5','d2d4','d7d6'], name: 'Obrona Alechina, wariant główny' },
-  { prefix: ['e2e4','g8f6'], name: 'Obrona Alechina' },
-  { prefix: ['e2e4','b8c6'], name: 'Obrona Nimzowitscha' },
-  { prefix: ['e2e4','b7b6'], name: 'Obrona Owena' },
-  { prefix: ['e2e4','a7a6'], name: 'Obrona św. Jerzego' },
-  // --- 1.d4: gambit hetmański ---
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','f8e7','e2e3','h7h6'], name: 'Gambit Hetmański, wariant Tartakowera' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','f8e7'], name: 'Gambit Hetmański, obrona ortodoksyjna' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','f8b4'], name: 'Gambit Hetmański, wariant Ragozina' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','d5c4'], name: 'Gambit Hetmański, wariant wiedeński' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','c4d5','e6d5'], name: 'Gambit Hetmański, wariant wymienny' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6'], name: 'Gambit Hetmański odrzucony' },
-  { prefix: ['d2d4','d7d5','c2c4','d5c4','g1f3','g8f6','e2e3','e7e6','f1c4','c7c5'], name: 'Gambit Hetmański przyjęty, wariant klasyczny' },
-  { prefix: ['d2d4','d7d5','c2c4','d5c4'], name: 'Gambit Hetmański przyjęty' },
-  { prefix: ['d2d4','d7d5','c2c4'], name: 'Gambit Hetmański' },
-  // --- 1.d4: słowiańskie ---
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','e7e6','e2e3','b8d7','f1d3','d5c4'], name: 'Obrona Słowiańska, wariant Merana' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','d5c4'], name: 'Obrona Słowiańska, wariant główny' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','e7e6'], name: 'Obrona Słowiańska, półsłowiańska' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','a7a6'], name: 'Obrona Słowiańska, wariant Czebanienki' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','c4d5','c6d5'], name: 'Obrona Słowiańska, wariant wymienny' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6'], name: 'Obrona Słowiańska' },
-  { prefix: ['d2d4','d7d5','c2c4','b8c6'], name: 'Obrona Czigorina' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e5'], name: 'Kontratak Albina' },
-  // --- 1.d4: katalońska, londyn, systemy ---
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g2g3','d7d5','f1g2','d5c4'], name: 'Partia Katalońska otwarta' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g2g3'], name: 'Partia Katalońska' },
-  { prefix: ['d2d4','d7d5','c1f4'], name: 'System Londyński' },
-  { prefix: ['d2d4','g8f6','c1f4','g7g6'], name: 'System Londyński, fianchetto' },
-  { prefix: ['d2d4','g8f6','c1f4'], name: 'System Londyński' },
-  { prefix: ['d2d4','d7d5','g1f3','g8f6','e2e3'], name: 'System Collego' },
-  { prefix: ['d2d4','g8f6','c1g5','e7e6','e2e4','h7h6','g5h4'], name: 'Atak Trompowskiego, wariant główny' },
-  { prefix: ['d2d4','g8f6','c1g5'], name: 'Atak Trompowskiego' },
-  { prefix: ['d2d4','g8f6','g1f3','e7e6','c1g5'], name: 'Atak Torrego' },
-  { prefix: ['d2d4','d7d5','b1c3','g8f6','c1g5'], name: 'Debiut Veresova' },
-  { prefix: ['d2d4','d7d5','b1c3','g8f6','e2e4'], name: 'Gambit Blackmara-Diemera' },
-  // --- 1.d4: indyjskie ---
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4','e2e3'], name: 'Obrona Nimzo-indyjska, wariant Rubinsteina' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4','a2a3'], name: 'Obrona Nimzo-indyjska, wariant Sämischa' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4'], name: 'Obrona Nimzo-indyjska' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g1f3','b7b6'], name: 'Obrona Hetmańsko-indyjska' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g1f3','f8b4'], name: 'Obrona Bogo-indyjska' },
-  { prefix: ['d2d4','e7e6','c2c4','b7b6'], name: 'Obrona Angielska' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','g1f3'], name: 'Obrona Królewsko-indyjska, wariant klasyczny' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','f2f3'], name: 'Obrona Królewsko-indyjska, wariant Sämischa' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','g2g3'], name: 'Obrona Królewsko-indyjska, fianchetto' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','f1e2','e8g8','c1g5'], name: 'Obrona Królewsko-indyjska, wariant Awerbacha' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','f2f4'], name: 'Obrona Królewsko-indyjska, wariant Czterech Pionów' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6'], name: 'Obrona Królewsko-indyjska' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5','c4d5','f6d5','e2e4','d5b6'], name: 'Obrona Grünfelda, wariant wymienny' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5','g1f3','f8g7','d1b3'], name: 'Obrona Grünfelda, wariant rosyjski' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5'], name: 'Obrona Grünfelda' },
-  // --- 1.d4: holenderska, Benoni, gambity ---
-  { prefix: ['d2d4','f7f5','g2g3','g8f6','f1g2','g7g6'], name: 'Obrona Holenderska, wariant leningradzki' },
-  { prefix: ['d2d4','f7f5','g2g3','g8f6','f1g2','e7e6','c2c4','d7d5'], name: 'Obrona Holenderska, Stonewall' },
-  { prefix: ['d2d4','f7f5','g1f3','g8f6','g2g3'], name: 'Obrona Holenderska, wariant klasyczny' },
-  { prefix: ['d2d4','f7f5'], name: 'Obrona Holenderska' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6','b1c3','e6d5','c4d5','d7d6'], name: 'Obrona Benoni, wariant główny' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e5'], name: 'Obrona Benoni, wariant czeski' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6'], name: 'Obrona Benoni' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','b7b5'], name: 'Gambit Wołżański (Benko)' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e5'], name: 'Gambit Budapeszteński' },
-  // --- 1.c4 angielska ---
-  { prefix: ['c2c4','e7e5','b1c3','g8f6','g2g3','d7d5','c4d5','f6d5'], name: 'Debiut Angielski, odwrócony Smok' },
-  { prefix: ['c2c4','e7e5','b1c3','g8f6','g2g3','g7g6'], name: 'Debiut Angielski, system Botwinnika' },
-  { prefix: ['c2c4','e7e5','b1c3'], name: 'Debiut Angielski, królewski' },
-  { prefix: ['c2c4','e7e5'], name: 'Debiut Angielski' },
-  { prefix: ['c2c4','c7c5','g1f3'], name: 'Debiut Angielski symetryczny' },
-  { prefix: ['c2c4','c7c5'], name: 'Debiut Angielski symetryczny' },
-  { prefix: ['c2c4','e7e6'], name: 'Debiut Angielski, wariant Agincourt' },
-  { prefix: ['c2c4','g8f6','b1c3','e7e6','e2e4'], name: 'Debiut Angielski, wariant Mikenas-Carls' },
-  // --- skoczek, flankowe ---
-  { prefix: ['g1f3','d7d5','g2g3','g8f6','f1g2','e7e6','e1g1'], name: 'Atak Królewsko-indyjski (KIA)' },
-  { prefix: ['g1f3','d7d5','g2g3'], name: 'Debiut Rétiego' },
-  { prefix: ['g1f3','d7d5','c2c4','d5c4'], name: 'Debiut Rétiego, gambit przyjęty' },
-  { prefix: ['g1f3'], name: 'Debiut Rétiego' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','f8e7','f1e1','b7b5','a4b3','d7d6','c2c3','e8g8','h2h3','c6a5'], name: 'Partia Hiszpańska, wariant Czigorina' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','f8e7','f1e1','b7b5','a4b3','d7d6','c2c3','e8g8','h2h3','c6b8'], name: 'Partia Hiszpańska, wariant Breyera' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','f8e7','f1e1','b7b5','a4b3','d7d6','c2c3','e8g8','h2h3','c8b7'], name: 'Partia Hiszpańska, wariant Zajcewa' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','f6e4','f1e1','d7d5'], name: 'Partia Hiszpańska, kontratak Marshalla' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','f6e4'], name: 'Partia Hiszpańska otwarta' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5c6','d7c6','e1g1'], name: 'Partia Hiszpańska, wariant wymienny z roszadą' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','f7f5'], name: 'Partia Hiszpańska, gambit Schliemanna' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','c6d4'], name: 'Partia Hiszpańska, obrona Birda' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','f8c5'], name: 'Partia Hiszpańska, obrona klasyczna' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','g8e7'], name: 'Partia Hiszpańska, obrona Cozio' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','d7d6'], name: 'Partia Hiszpańska, obrona Steinitza' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','b2b4','c5b6'], name: 'Partia Włoska, gambit Evansa odrzucony' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6','f3g5','d7d5','e4d5','f6d5'], name: 'Partia Włoska, atak Wątróbki (Fried Liver)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6','f3g5','d7d5','e4d5','c6d4'], name: 'Obrona Dwóch Skoczków, wariant Fritza' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6','f3g5','d7d5','e4d5','b7b5'], name: 'Obrona Dwóch Skoczków, wariant Ulvestada' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','c2c3','g8f6','d2d4'], name: 'Partia Włoska, atak Moellera' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','f8c5'], name: 'Partia Szkocka, wariant klasyczny' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','g8f6'], name: 'Partia Szkocka, wariant Schmidta' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','d8h4'], name: 'Partia Szkocka, wariant Steinitza' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6','f1b5','c6d4'], name: 'Partia Czterech Skoczków, wariant Rubinsteina' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6','f3e5'], name: 'Partia Czterech Skoczków, gambit Halloween' },
-  { prefix: ['e2e4','e7e5','g1f3','d7d6','d2d4','b8d7'], name: 'Obrona Philidora, wariant Hanhama' },
-  { prefix: ['e2e4','e7e5','g1f3','g8f6','d2d4'], name: 'Obrona Rosyjska, atak nowoczesny' },
-  { prefix: ['e2e4','e7e5','g1f3','g8f6','f3e5','d7d6','e5f7'], name: 'Obrona Rosyjska, gambit Cochranea' },
-  { prefix: ['e2e4','e7e5','g1f3','f7f5','f3e5'], name: 'Gambit Łotewski, wariant Młota' },
-  { prefix: ['e2e4','e7e5','g1f3','f7f6','f3e5','f6e5','d1h5'], name: 'Obrona Damiano, refutacja' },
-  { prefix: ['e2e4','e7e5','g1f3','d7d5','e4d5','d8d5'], name: 'Gambit Słonia, wariant Maróczyego' },
-  { prefix: ['e2e4','e7e5','g1f3','f8c5'], name: 'Gambit Buscha-Gassa' },
-  { prefix: ['e2e4','e7e5','g1f3','c7c6'], name: 'Obrona McLeoda' },
-  { prefix: ['e2e4','e7e5','g1f3','f8d6'], name: 'Obrona Żółwia' },
-  { prefix: ['e2e4','e7e5','g1f3','g8e7'], name: 'System Gleka' },
-  { prefix: ['e2e4','e7e5','g1f3','b7b6'], name: 'Obrona Kenilworth' },
-  { prefix: ['e2e4','e7e5','g1f3','g7g6'], name: 'Wariant Sollera' },
-  { prefix: ['e2e4','e7e5','g1f3','c7c5'], name: 'Obrona Freda' },
-  { prefix: ['e2e4','e7e5','g1f3','d8e7'], name: 'Obrona Gunderama' },
-  { prefix: ['e2e4','e7e5','a2a3'], name: 'Otwarcie Mengariniego' },
-  { prefix: ['e2e4','e7e5','d2d3'], name: 'Wariant Leonardisa' },
-  { prefix: ['e2e4','e7e5','f1d3'], name: 'Otwarcie Taylera' },
-  { prefix: ['e2e4','e7e5','d1e2'], name: 'Wariant Clam' },
-  { prefix: ['e2e4','e7e5','d1f3'], name: 'Atak Napoleona' },
-  { prefix: ['e2e4','e7e5','f1b5'], name: 'Otwarcie Portugalskie' },
-  { prefix: ['e2e4','e7e5','d1h5'], name: 'Atak Królowej (Wayward Queen)' },
-  { prefix: ['e2e4','e7e5','g1e2'], name: 'Otwarcie Ałapina' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','e4e5','c7c5','c2c3','b8c6','g1f3'], name: 'Obrona Francuska, wariant posunięty (główny)' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1c3','f8b4','e4e5','c7c5'], name: 'Obrona Francuska, Winawer (główny)' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1c3','g8f6','e4e5','f6d7'], name: 'Obrona Francuska, klasyczny (główny)' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','b1d2','c7c5'], name: 'Obrona Francuska, Tarrasch otwarty' },
-  { prefix: ['e2e4','e7e6','d2d4','d7d5','e4d5','e6d5'], name: 'Obrona Francuska, wariant wymienny (pełny)' },
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','b1c3','d5e4','c3e4','c8f5','e4g3','f5g6'], name: 'Obrona Caro-Kann, klasyczny (główny)' },
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','b1c3','d5e4','c3e4','b8d7'], name: 'Obrona Caro-Kann, wariant Karpow' },
-  { prefix: ['e2e4','c7c6','d2d4','d7d5','b1c3','d5e4','c3e4','g8f6','e4f6','e7f6'], name: 'Obrona Caro-Kann, wariant Bronsteina-Larsena' },
-  { prefix: ['e2e4','c7c6','f1c4'], name: 'Obrona Caro-Kann, Hillbilly' },
-  { prefix: ['e2e4','c7c6','c2c4'], name: 'Obrona Caro-Kann, przyśpieszony Panov' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','b8c6','c1g5'], name: 'Sycylijska, atak Richtera-Rauzera' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','b8c6','f1c4'], name: 'Sycylijska, atak Sozina' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','b8c6','f1e2','e7e5'], name: 'Sycylijska, wariant Bolesławskiego' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','g7g6','c1e3','f8g7','f2f3'], name: 'Sycylijska, Smok jugosłowiański' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','g7g6','f2f4'], name: 'Sycylijska, atak Levenfisha' },
-  { prefix: ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','a7a6','c1g5','e7e6','f2f4','d8b6'], name: 'Sycylijska, Najdorf i zatruty pion' },
-  { prefix: ['e2e4','c7c5','g1f3','a7a6'], name: "Sycylijska, wariant O'Kelly'ego" },
-  { prefix: ['e2e4','c7c5','g1f3','g8f6'], name: 'Sycylijska, wariant Nimzowitscha' },
-  { prefix: ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6','f2f4'], name: 'Obrona Pirca, atak austriacki' },
-  { prefix: ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6','g1f3'], name: 'Obrona Pirca, wariant klasyczny' },
-  { prefix: ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6','g1f3','f8g7','c1e3'], name: 'Obrona Pirca, atak 150' },
-  { prefix: ['e2e4','g7g6','d2d4','f8g7'], name: 'Obrona Nowoczesna, wariant główny' },
-  { prefix: ['e2e4','g7g6','f1c4'], name: 'Obrona Nowoczesna, Zadek Małpy' },
-  { prefix: ['e2e4','d7d5','e4d5','d8d5','b1c3','d5a5','d2d4','g8f6','g1f3'], name: 'Obrona Skandynawska, wariant główny' },
-  { prefix: ['e2e4','d7d5','e4d5','d8d5','b1c3','d5d8'], name: 'Obrona Skandynawska, wariant Gubinskiego-Meltsa' },
-  { prefix: ['e2e4','g8f6','e4e5','f6d5','d2d4','d7d6','c2c4','d5b6','f2f4'], name: 'Obrona Alechina, wariant Czterech Pionów' },
-  { prefix: ['e2e4','g8f6','e4e5','f6d5','d2d4','d7d6','g1f3'], name: 'Obrona Alechina, wariant nowoczesny' },
-  { prefix: ['e2e4','g8f6','e4e5','f6d5','d2d4','d7d6','c2c4','d5b6','e5d6'], name: 'Obrona Alechina, wariant wymienny' },
-  { prefix: ['e2e4','b8c6','d2d4','e7e5'], name: "Obrona Nimzowitscha, wariant Kennedy'ego" },
-  { prefix: ['e2e4','b8c6','g1f3','f7f5'], name: 'Obrona Nimzowitscha, gambit Kolorado' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g7g5','h2h4','g5g4','f3e5'], name: 'Gambit Królewski, wariant Kieseritzkyego' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g7g5','f1c4','g5g4','e1g1'], name: 'Gambit Królewski, gambit Muzio' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','f8e7'], name: 'Gambit Królewski, obrona Cunninghama' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g7g5','h2h4','g5g4','f3g5'], name: 'Gambit Królewski, gambit Allgaiera' },
-  { prefix: ['e2e4','e7e5','f2f4','f8c5','g1f3','d7d6'], name: 'Gambit Królewski, obrona nowoczesna' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g7g5','b1c3'], name: 'Gambit Królewski, gambit Quaade' },
-  { prefix: ['e2e4','e7e5','b1c3','g8f6','f1c4'], name: 'Debiut Wiedeński, wariant Stanleya' },
-  { prefix: ['e2e4','e7e5','b1c3','g8f6','f2f4','d7d5'], name: 'Debiut Wiedeński, Falkbeer wiedeński' },
-  { prefix: ['e2e4','e7e5','f1c4','f7f5'], name: 'Debiut Gońca, kontragambit Kalabryjski' },
-  { prefix: ['e2e4','e7e5','f1c4','g8f6','g1f3','f6e4','e1g1'], name: 'Debiut Gońca, gambit Bodena-Kieseritzkyego' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','c2c3','g8f6'], name: 'Debiut Ponzianiego, wariant Jaenischa' },
-  { prefix: ['e2e4','e7e5','d2d4','e5d4','c2c3','d4c3','f1c4','c3b2'], name: 'Gambit Duński przyjęty' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','b8d7','e2e3','c7c6','g1f3','d8a5'], name: 'Gambit Hetmański, wariant Cambridge Springs' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','f8e7','e2e3','h7h6','g5h4'], name: 'Gambit Hetmański, obrona Laskera' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','c7c5'], name: 'Gambit Hetmański, obrona Tarrascha' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','c1g5','c7c6','e2e4'], name: 'Gambit Hetmański, gambit Marshalla' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','c7c5','c4d5','c5d4'], name: 'Gambit Hetmański, wariant Henniga-Schary' },
-  { prefix: ['d2d4','d7d5','c2c4','d5c4','e2e3'], name: 'Gambit Hetmański przyjęty, wariant stary' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','d5c4','e2e4'], name: 'Obrona Słowiańska, gambit Gellera' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','b1c3','g8f6','e2e3','g7g6'], name: 'Obrona Słowiańska, wariant Steinera' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','g1f3','g8f6','b1c3','g7g6'], name: 'Obrona Słowiańska, wariant Schlechtera' },
-  { prefix: ['d2d4','d7d5','c2c4','c7c6','b1c3','e7e5'], name: 'Obrona Słowiańska, kontragambit Winawera' },
-  { prefix: ['d2d4','d7d5','c2c4','b8c6','g1f3','c8g4'], name: 'Obrona Czigorina, wariant Janowskiego' },
-  { prefix: ['d2d4','d7d5','c2c4','b8c6','g1f3','e7e5'], name: 'Obrona Czigorina, łódzka' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e5','d4e5','d5d4','g1f3','b8c6'], name: 'Kontratak Albina, wariant główny' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g2g3','d7d5','f1g2','f8e7','g1f3'], name: 'Partia Katalońska zamknięta' },
-  { prefix: ['d2d4','d7d5','c1f4','g8f6','e2e3','c7c5'], name: 'System Londyński z ...c5' },
-  { prefix: ['d2d4','d7d5','c1f4','g8f6','e2e3','c8f5'], name: 'System Londyński nowoczesny' },
-  { prefix: ['d2d4','d7d5','g1f3','g8f6','e2e3','e7e6','f1d3','c7c5'], name: 'System Collego, wariant główny' },
-  { prefix: ['d2d4','g8f6','g1f3','e7e6','e2e3','b7b6'], name: 'System Zukertorta' },
-  { prefix: ['d2d4','g8f6','c1g5','f6e4'], name: 'Atak Trompowskiego, wariant klasyczny' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4','e2e3','e8g8','f1d3','d7d5'], name: 'Obrona Nimzo-indyjska, klasyczny (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4','e2e3','c7c5'], name: 'Obrona Nimzo-indyjska, wariant Hübnera' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','f8b4','a2a3','b4c3','b2c3','c7c5'], name: 'Obrona Nimzo-indyjska, Sämisch (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g1f3','b7b6','g2g3','c8a6'], name: 'Obrona Hetmańsko-indyjska, wariant klasyczny' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','g1f3','e8g8','f1e2','e7e5'], name: 'Obrona Królewsko-indyjska, klasyczny (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','g1f3','e8g8','f1e2','e7e5','e1g1','b8c6','d4d5','c6e7'], name: 'Obrona Królewsko-indyjska, Mar del Plata' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','f2f3','e8g8','c1e3','c7c5'], name: 'Obrona Królewsko-indyjska, Sämisch (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','g2g3','e8g8','f1g2'], name: 'Obrona Królewsko-indyjska, fianchetto (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7','e2e4','d7d6','f2f4','e8g8','g1f3'], name: 'Obrona Królewsko-indyjska, Cztery Piony (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5','c4d5','f6d5','e2e4','d5c3','b2c3','f8g7'], name: 'Obrona Grünfelda, wymienny (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5','c1f4'], name: 'Obrona Grünfelda, wariant węgierski' },
-  { prefix: ['d2d4','g8f6','c2c4','g7g6','b1c3','d7d5','g1f3','f8g7','d1a4'], name: 'Obrona Grünfelda, wariant sztokholmski' },
-  { prefix: ['d2d4','f7f5','g2g3','g8f6','g1f3','g7g6','f1g2','f8g7','e1g1','e8g8'], name: 'Obrona Holenderska, leningradzki (główny)' },
-  { prefix: ['d2d4','f7f5','g2g3','g8f6','f1g2','e7e6','c2c4','d7d5','g1f3','c7c6'], name: 'Obrona Holenderska, Stonewall (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6','b1c3','e6d5','c4d5','d7d6','g1f3','g7g6'], name: 'Obrona Benoni, wariant główny' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6','b1c3','e6d5','c4d5','d7d6','g1f3','g7g6','g2g3'], name: 'Obrona Benoni, fianchetto' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e5','b1c3','d7d6','e2e4'], name: 'Obrona Benoni, czeski (główny)' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','b7b5','c4b5','a7a6'], name: 'Gambit Wołżański przyjęty' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e5','d4e5','f6g4'], name: 'Gambit Budapeszteński, wariant główny' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e5','d4e5','f6e4'], name: 'Gambit Budapeszteński, wariant Fajarowicza' },
-  { prefix: ['d2d4','e7e5'], name: 'Gambit Englunda' },
-  { prefix: ['d2d4','b7b5'], name: 'Obrona Polska' },
-  { prefix: ['d2d4','d7d6','c2c4','e7e5'], name: 'Obrona Szczura' },
-  { prefix: ['d2d4','g8f6','g1f3','d7d6'], name: "Obrona Wade'a" },
-  { prefix: ['d2d4','d7d5','e2e4','d5e4','b1c3','g8f6','f2f3','e4f3'], name: 'Gambit Blackmara-Diemera przyjęty' },
-  { prefix: ['d2d4','d7d5','e2e4','d5e4','b1c3','e7e5'], name: 'Gambit Blackmara-Diemera, obrona Euwe' },
-  { prefix: ['c2c4','e7e5','g2g3','g8f6','f1g2'], name: 'Debiut Angielski, atak królewsko-indyjski' },
-  { prefix: ['c2c4','e7e5','b1c3','g8f6','g1f3','b8c6'], name: 'Debiut Angielski, czterech skoczków' },
-  { prefix: ['g1f3','d7d5','c2c4','d5d4'], name: 'Debiut Rétiego, wariant posunięty' },
-  { prefix: ['b1c3','d7d5'], name: 'Atak Van Geeta, otwarcie Dunsta' },
-  { prefix: ['b1c3','e7e5'], name: 'Atak Van Geeta, kontra Kolorado' },
-  { prefix: ['g1h3','d7d5'], name: 'Debiut Amara, wariant paryski' },
-  { prefix: ['f2f3','e7e5'], name: 'Otwarcie Barnesa, Hammerschlag' },
-  { prefix: ['b1a3','g7g5'], name: 'Debiut Durkina, atak Sodowy' },
-  { prefix: ['a2a4','e7e5'], name: "Debiut Ware'a, Krab" },
-  { prefix: ['g2g4','d7d5','f1g2'], name: 'Debiut Groba, wariant główny' },
-  { prefix: ['g2g4','e7e5'], name: 'Debiut Groba, kontragambit Romforda' },
-  { prefix: ['b2b4','e7e5','c1b2'], name: 'Debiut Sokolskiego, wariant główny' },
-  { prefix: ['b2b4','c7c5'], name: 'Debiut Sokolskiego, gambit Birmingham' },
-  { prefix: ['f2f4','d7d5'], name: 'Debiut Birda, wariant główny' },
-  { prefix: ['f2f4','e7e5'], name: 'Debiut Birda, gambit Froma' },
-  { prefix: ['b2b3','e7e5'], name: 'Debiut Larsena, wariant nowoczesny' },
-  { prefix: ['b2b3','d7d5'], name: 'Debiut Larsena, wariant klasyczny' },
-  { prefix: ['c2c3','e7e5'], name: 'Debiut Saragossy, wariant główny' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1b5','a7a6','b5a4','g8f6','e1g1','b7b5','a4b3','c8b7'], name: 'Partia Hiszpańska, neo-archangielski' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','c2c3','g8f6','d2d3','d7d6'], name: 'Partia Włoska z ...d6' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','b2b4','c5b4','c2c3','b4a5'], name: 'Partia Włoska, gambit Evansa przyjęty (główny)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6','d2d4','e5d4','e4e5','d7d5'], name: 'Obrona Dwóch Skoczków, wariant otwarty' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','g8f6','c4f7'], name: "Gambit Jerome'a" },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','f1c4','c6d4'], name: 'Gambit Shillinga (Blackburne)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','f8c5','c1e3','d8f6','c2c3','g8e7'], name: 'Partia Szkocka, wariant Lollego' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f3d4','f8c5','d4b3'], name: 'Partia Szkocka, wariant Pottera' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f1c4'], name: 'Gambit Szkocki' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','c2c3','d4c3','b1c3'], name: 'Partia Szkocka, Göring przyjęty (główny)' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g8f6','f1b5','a7a6'], name: 'Partia Czterech Skoczków, wariant Gunsberga' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','b1c3','g7g6'], name: 'Debiut Trzech Skoczków, wariant Steinitza' },
-  { prefix: ['e2e4','e7e5','g1f3','b8c6','c2c3','d7d5'], name: 'Debiut Ponzianiego, kontra Caro' },
-  { prefix: ['e2e4','e7e5','d2d4','e5d4','c2c3','d7d5'], name: 'Gambit Duński, obrona Schlechtera' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g7g5','f1c4','g5g4','e1g1','d7d5'], name: 'Gambit Królewski, obrona Polerio' },
-  { prefix: ['e2e4','e7e5','f2f4','d8h4'], name: "Gambit Królewski, obrona Keene'a" },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','d8e7'], name: 'Gambit Królewski, wariant Norwala' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','h7h6'], name: 'Gambit Królewski, obrona Beckera' },
-  { prefix: ['e2e4','e7e5','f2f4','e5f4','g1f3','g8e7'], name: 'Gambit Królewski, obrona Svenoniusa' },
-  { prefix: ['e2e4','e7e5','b1c3','g8f6','f1c4','f6e4'], name: 'Debiut Wiedeński, wariant Hamppe-Meitnera' },
-  { prefix: ['e2e4','e7e5','b1c3','b8c6','f2f4','d7d5'], name: 'Debiut Wiedeński, wariant Steinitza' },
-  { prefix: ['e2e4','e7e5','b1c3','g8f6','g2g3'], name: 'Debiut Wiedeński, Pchła' },
-  { prefix: ['e2e4','e7e5','f1c4','f8c5','c2c3','d7d5'], name: 'Debiut Gońca, kontragambit Lewisa' },
-  { prefix: ['e2e4','e7e5','f1c4','b7b5'], name: 'Debiut Gońca, gambit Skrzydłowy' },
-  { prefix: ['e2e4','e7e5','f1c4','b7b6'], name: 'Debiut Gońca, obrona Anderssena' },
-  { prefix: ['e2e4','e7e5','f1c4','c7c6'], name: 'Debiut Gońca, wariant Steina' },
-  { prefix: ['e2e4','e7e5','g1f3','d7d6','d2d4','g8f6'], name: 'Obrona Philidora, wariant główny' },
-  { prefix: ['d2d4','d7d5','c2c4','e7e6','b1c3','g8f6','e2e4'], name: 'Gambit Hetmański, gambit Marshalla (pełny)' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','g1f3','f8b4','c1d2'], name: 'Obrona Bogo-indyjska, wariant główny' },
-  { prefix: ['d2d4','g8f6','c2c4','e7e6','b1c3','d7d5'], name: 'Gambit Hetmański odrzucony (kolejność Nimzo)' },
-  { prefix: ['d2d4','f7f5','c2c4','g8f6','b1c3','e7e6'], name: 'Obrona Holenderska, wariant z Sc3' },
-  { prefix: ['d2d4','g8f6','c2c4','c7c5','d4d5','d7d6'], name: 'Obrona Benoni, blokada' },
-  { prefix: ['c2c4','e7e5','b1c3','g8f6','e2e4'], name: 'Debiut Angielski, gambit Reversed' },
-  { prefix: ['g2g3','d7d5','f1g2','e7e5'], name: 'Otwarcie Benko z ...e5' },
-  { prefix: ['b2b3','g8f6','c1b2','e7e6'], name: 'Debiut Larsena, wariant klasyczny z Sf6' },
-  { prefix: ['e2e3','d7d5','d2d4'], name: "Otwarcie Van't Kruijsa, odwrócony francuski" },
-  { prefix: ['d2d3','d7d5','g2g3'], name: 'Debiut Miesesa z fianchetto' },
-];
 
 // 🧩 ZAGADKI (65): maty klasyczne + najlepsze ruchy z partii GM (Stockfish 10).
 export interface Puzzle { name: string; level: 1 | 2 | 3; goal: 'mat' | 'tac'; mn: number; fen: string; tip: string; sol: string; accept: string[]; pv: string; meta: string; }
@@ -1412,7 +759,7 @@ export default function App() {
     try {
       const v = localStorage.getItem('ad3-vol');
       if (v !== null) { setVolume(Number(v)); volumeRef.current = Number(v) / 100; }
-      const pz = localStorage.getItem('ad3-puzzles4');
+      const pz = localStorage.getItem('ad3-puzzles5');
       if (pz) setSolvedPuzzles(JSON.parse(pz));
     } catch { /* ignore */ }
     initGame();
@@ -1553,15 +900,29 @@ export default function App() {
 
   const buildPGN = (): string => {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
-    const whiteName = gameMode === 'ai' ? (humanColorRef.current === 'w' ? 'Gracz' : 'Super Chess') : 'Gracz';
-    const blackName = gameMode === 'ai' ? (humanColorRef.current === 'b' ? 'Gracz' : 'Super Chess') : 'Super Chess';
-    let res = `[Event "Super Chess"]\n[Site "Browser"]\n[Date "${date}"]\n[White "${whiteName}"]\n[Black "${blackName}"]\n[Result "${gameResult ? (gameResult.winner === 'w' ? '1-0' : gameResult.winner === 'b' ? '0-1' : '1/2-1/2') : '*'}"]\n[FEN "${boardToFEN()}"]\n\n`;
+    const whiteName = gameMode === 'ai' ? (humanColorRef.current === 'w' ? 'Gracz' : '♔♚ 👑 Bąbel Chess 👑🏁♚♔') : 'Gracz';
+    const blackName = gameMode === 'ai' ? (humanColorRef.current === 'b' ? 'Gracz' : '♔♚ 👑 Bąbel Chess 👑🏁♚♔') : '♔♚ 👑 Bąbel Chess 👑🏁♚♔';
+    let res = `[Event "♔♚ 👑 Bąbel Chess 👑🏁♚♔"]\n[Site "Browser"]\n[Date "${date}"]\n[White "${whiteName}"]\n[Black "${blackName}"]\n[Result "${gameResult ? (gameResult.winner === 'w' ? '1-0' : gameResult.winner === 'b' ? '0-1' : '1/2-1/2') : '*'}"]\n[FEN "${boardToFEN()}"]\n\n`;
     moveHistory.forEach((m, i) => {
       if (i % 2 === 0) res += `${Math.floor(i / 2) + 1}. `;
       res += `${m.san} `;
     });
     res += gameResult ? (gameResult.winner === 'w' ? '1-0' : gameResult.winner === 'b' ? '0-1' : '1/2-1/2') : '*';
     return res;
+  };
+
+  const downloadTextFile = (filename: string, content: string, mime = 'text/plain;charset=utf-8') => {
+    try {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { /* ignore */ }
   };
 
   const saveGame = () => {
@@ -1591,21 +952,14 @@ export default function App() {
   };
 
   const updateOpening = (mh: MoveRec[]) => {
-    // 1) Dopasowanie POZYCYJNE (ECO) - odporne na transpozycje kolejności ruchów.
-    // Klucz to rozstaw bierek + strona do ruchu, dokładnie jak wygenerowany python-chess.
-    const posKey = boardRef.current.map(p => p || '.').join('') + sideToMoveRef.current;
-    const posName = ECO_POS[posKey] || '';
-    // 2) Fallback: dopasowanie sekwencji od 1. ruchu (głębsze warianty wygrywają)
     const uci = mh.map(m => sqToAlg(m.from) + sqToAlg(m.to)).join(' ');
-    let best = '';
-    for (const o of OPENING_BOOK) {
-      const pre = o.prefix.join(' ');
-      if (uci.startsWith(pre) && pre.length > best.length) best = o.name;
-      else if (uci === pre) best = o.name;
+    const posKey = positionKey(boardRef.current, sideToMoveRef.current, castleRef.current, enPassantRef.current);
+    const found = detectOpening(uci, posKey);
+    if (found) {
+      setOpeningName(found.eco ? `${found.eco} · ${found.name}` : found.name);
+      return;
     }
-    best = posName || best;
-    if (!best && mh.length >= 1) {
-      // Pierwsze posunięcie - pełna polska nazwa otwarcia flankowego
+    if (mh.length >= 1) {
       const first: Record<string, string> = {
         e2e4: 'Otwarcie pionem królewskim (1.e4)', d2d4: 'Otwarcie pionem hetmańskim (1.d4)',
         c2c4: 'Debiut Angielski (1.c4)', g1f3: 'Debiut Rétiego (1.Sf3)',
@@ -1618,9 +972,10 @@ export default function App() {
         g1h3: 'Debiut Amara (1.Sh3)', a2a4: "Debiut Ware'a (1.a4)",
         b1a3: 'Debiut Durkina (1.Sa3)', f2f3: 'Otwarcie Barnesa (1.f3)',
       };
-      best = first[sqToAlg(mh[0].from) + sqToAlg(mh[0].to)] || '';
+      setOpeningName(first[sqToAlg(mh[0].from) + sqToAlg(mh[0].to)] || '');
+      return;
     }
-    setOpeningName(best);
+    setOpeningName('');
   };
 
   const finishGame = (type: GameResultType, winner: 'w' | 'b' | null) => {
@@ -1955,7 +1310,7 @@ export default function App() {
   };
 
   const resetPuzzles = () => {
-    try { localStorage.removeItem('ad3-puzzles4'); } catch { /* ignore */ }
+    try { localStorage.removeItem('ad3-puzzles5'); } catch { /* ignore */ }
     setSolvedPuzzles([]);
     setListMsg('');
     startPuzzle(Math.floor(Math.random() * PUZZLES_FROM_LICHESS.length));
@@ -1972,7 +1327,7 @@ export default function App() {
     setSolvedPuzzles(prev => {
       if (prev.includes(idx)) return prev;
       const n = [...prev, idx];
-      try { localStorage.setItem('ad3-puzzles4', JSON.stringify(n)); } catch { /* ignore */ }
+      try { localStorage.setItem('ad3-puzzles5', JSON.stringify(n)); } catch { /* ignore */ }
       return n;
     });
   };
@@ -2789,12 +2144,12 @@ export default function App() {
         }
         
         .panel {
-          background: linear-gradient(135deg, rgba(35, 35, 45, 0.95) 0%, rgba(25, 25, 35, 0.95) 100%);
+          background: linear-gradient(135deg, rgba(24, 28, 44, 0.84) 0%, rgba(12, 16, 30, 0.9) 100%);
           border-radius: 16px;
           padding: 24px;
           margin: 10px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
         }
         .btn {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -2995,10 +2350,10 @@ export default function App() {
         /* Karty sterowania */
         .ctl-card {
           min-width: 0;
-          background: linear-gradient(135deg, rgba(38,38,52,.96), rgba(18,18,28,.96));
-          border: 1px solid rgba(255,255,255,.10);
+          background: linear-gradient(135deg, rgba(32,36,52,.8), rgba(16,20,34,.86));
+          border: 1px solid rgba(255,255,255,.12);
           border-radius: 14px; padding: 12px 14px;
-          box-shadow: 0 6px 20px rgba(0,0,0,.45);
+          box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05);
           display: flex; flex-direction: column; gap: 8px;
         }
         .ctl-title {
@@ -3168,11 +2523,23 @@ export default function App() {
         .puzzles-header h3 { margin: 0; font-size: 18px; }
         .puzzles-header p { margin: 2px 0 0 0; font-size: 13px; }
       `}</style>
-      
-      <div className="mx-auto px-2 w-full flex flex-col" style={{ maxWidth: '1400px' }}>
+
+      <div className="bubble-aurora" aria-hidden="true" />
+      <div className="bubble-field" aria-hidden="true">
+        {BUBBLES.map((bubble, index) => (
+          <span key={index} className="bubble" style={bubbleStyle(bubble)} />
+        ))}
+      </div>
+      <div className="bubble-field bubble-field-front" aria-hidden="true">
+        {FOREGROUND_BUBBLES.map((bubble, index) => (
+          <span key={index} className="bubble" style={bubbleStyle(bubble)} />
+        ))}
+      </div>
+
+      <div className="mx-auto px-2 w-full flex flex-col relative z-10" style={{ maxWidth: '1400px' }}>
         <header className="text-center mb-0 shrink-0">
           <h1 className="text-xl xl:text-2xl font-bold mb-0 bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-            ♔ Super Chess
+            ♔♚ 👑 Bąbel Chess 👑🏁♚♔
           </h1>
           <p className="text-xs text-gray-400 max-w-2xl mx-auto hidden xl:block">
             Figury Merida / Kingdom - wybierz w Ustawieniach
@@ -3183,16 +2550,16 @@ export default function App() {
           <div className="flex-1 min-w-0 w-full flex flex-col">
               <div className="panel flex-1 flex flex-col" style={{ margin: 0 }}>
               <div className="flex justify-between items-center mb-1 shrink-0 flex-wrap gap-2">
-                <div className="flex items-center">
+                <div className="flex items-center min-w-0 flex-1">
                   <span className={`status-indicator ${engineRunning ? 'busy' : 'online'}`}></span>
-                  <span className="font-bold text-lg">Super Chess</span>
+                  <span className="font-bold text-sm sm:text-lg truncate" title="♔♚ 👑 Bąbel Chess 👑🏁♚♔">♔♚ 👑 Bąbel Chess 👑🏁♚♔</span>
                   <span
                     title={engineStatus === 'ready' ? 'Przeciwnik: Stockfish 19 (pełna siła) - kliknij, by przeładować silnik' : engineStatus === 'loading' ? 'Silnik Stockfish się ładuje…' : 'Stockfish niedostępny - kliknij, by spróbować ponownie'}
                     onClick={() => { if (engineStatus === 'error') stockfish.retry().catch(() => {}); }}
                     style={{
                       marginLeft: 10, fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 999,
                       background: engineStatus === 'ready' ? 'linear-gradient(135deg,#16a34a,#065f46)' : engineStatus === 'loading' ? 'linear-gradient(135deg,#d97706,#92400e)' : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
-                      color: '#fff', whiteSpace: 'nowrap',
+                      color: '#fff', whiteSpace: 'nowrap', flexShrink: 0,
                       cursor: engineStatus === 'error' ? 'pointer' : 'default',
                     }}
                   >
@@ -3217,7 +2584,7 @@ export default function App() {
                             : (humanColor === 'w' ? '🤖 Komputer myśli... - Czarne' : '🤖 Komputer myśli... - Białe')))}
                 </div>
               </div>
-              <div className="text-center text-xs text-emerald-300" style={{ marginBottom: 2, minHeight: 16 }}>{openingName ? `📖 ${openingName}` : ' '}</div>
+              <div className="text-center text-xs text-emerald-300 overflow-hidden text-ellipsis whitespace-nowrap px-2" style={{ marginBottom: 2, minHeight: 16 }} title={openingName || undefined}>{openingName ? `📖 ${openingName}` : ' '}</div>
               <div className="clock-bar">
                 {(() => {
                   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -3689,6 +3056,11 @@ export default function App() {
                 <button className="btn btn-secondary bottom-btn" onClick={() => { try { navigator.clipboard.writeText(boardToFEN()); } catch { /* ignore */ } }}>📋 Kopiuj FEN</button>
                 <button className="btn btn-secondary bottom-btn" onClick={() => { try { navigator.clipboard.writeText(buildPGN()); } catch { /* ignore */ } }}>📋 Kopiuj PGN</button>
               </div>
+
+              <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                <button className="btn btn-secondary bottom-btn" onClick={() => downloadTextFile('fen.txt', boardToFEN())}>💾 Zapisz FEN do pliku tekstowego</button>
+                <button className="btn btn-secondary bottom-btn" onClick={() => downloadTextFile('partia.pgn', buildPGN(), 'application/x-chess-pgn;charset=utf-8')}>💾 Zapisz PGN do pliku tekstowego</button>
+              </div>
               
               <div style={{ marginTop: 12 }}>
                 <div className="text-gray-300 mb-1">📥 Import FEN:</div>
@@ -3701,7 +3073,7 @@ export default function App() {
               <h3 className="font-bold text-lg mt-8 mb-4">📜 Historia Ruchów</h3>
               <div className="move-history">
                 {moveHistory.length === 0 ? (
-                  <div className="text-gray-400 text-center py-6">🎮 Kliknij "Nowa Gra" aby rozpocząć!</div>
+                  <div className="text-gray-400 text-center py-6">🎮 Wybierz "Start partii" aby Rozpocząć Rozgrywkę!!! 🎮</div>
                 ) : (
                   (() => {
                     const rows = [];
@@ -3750,21 +3122,25 @@ export default function App() {
                   />
                   <span className="text-gray-300">🔊 Dźwięki turniejowe</span>
                 </label>
-                <label className="flex items-center gap-2">
-                  <span className="text-gray-300 text-sm">🔈 Głośność:</span>
-                  <input
-                    type="range" min={0} max={100} value={volume}
-                    onChange={e => {
-                      const v = Number(e.target.value);
-                      setVolume(v); volumeRef.current = v / 100;
-                      try { localStorage.setItem('ad3-vol', String(v)); } catch { /* ignore */ }
-                    }}
-                    className="flex-1"
-                  />
-                  <span className="text-gray-400 text-xs w-9">{volume}%</span>
-                  <button className="btn btn-secondary bottom-btn" onClick={() => playSound('move')}>▶️ Test</button>
-                  <button className="btn btn-secondary bottom-btn" onClick={() => playSound('levelup')}>🏆 Mat</button>
-                </label>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 min-w-0">
+                    <span className="text-gray-300 text-sm whitespace-nowrap">🔈 Głośność:</span>
+                    <input
+                      type="range" min={0} max={100} value={volume}
+                      onChange={e => {
+                        const v = Number(e.target.value);
+                        setVolume(v); volumeRef.current = v / 100;
+                        try { localStorage.setItem('ad3-vol', String(v)); } catch { /* ignore */ }
+                      }}
+                      className="flex-1 min-w-0"
+                    />
+                    <span className="text-gray-400 text-xs w-9 text-right">{volume}%</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn btn-secondary bottom-btn" onClick={() => playSound('move')}>▶️ Test</button>
+                    <button className="btn btn-secondary bottom-btn" onClick={() => playSound('levelup')}>🏆 Mat</button>
+                  </div>
+                </div>
                 <div>
                   <div className="text-gray-300 mb-1">🎨 Motyw planszy:</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -3879,7 +3255,7 @@ export default function App() {
                       <>
                         <div className="puzzle-list">
                           {filtered.map((p, i) => {
-                            const globalIdx = PUZZLES_FROM_LICHESS.indexOf(p);
+                            const globalIdx = PUZZLE_INDEX.get(p) ?? i;
                             const isSolved = solvedSet.has(globalIdx);
                             return (
                               <div key={i} className={`puzzle-item ${isSolved ? 'solved' : ''}`}>
