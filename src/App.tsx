@@ -17,6 +17,40 @@ export function evalToDisplay(ev: { cp: number | null; mate: number | null }): {
 
 export type GameResultType = 'mate' | 'stalemate' | 'draw-50' | 'draw-repetition' | 'draw-material' | 'draw-agreement' | 'resign' | 'timeout';
 export interface MoveRec { from: number; to: number; piece: string; captured?: string | null; promotion?: string; san: string; }
+interface HistorySnapshot {
+  board: (string | null)[];
+  side: 'w' | 'b';
+  castle: { wk: boolean; wq: boolean; bk: boolean; bq: boolean };
+  ep: number;
+  half: number;
+  cw: string[];
+  cb: string[];
+  mh: MoveRec[];
+  lm: { from: number; to: number } | null;
+}
+interface PuzzleReturnState {
+  board: (string | null)[];
+  side: 'w' | 'b';
+  castle: { wk: boolean; wq: boolean; bk: boolean; bq: boolean };
+  ep: number;
+  half: number;
+  lastProgress: { kind: 'start' | 'pawn' | 'capture'; san: string };
+  positionCounts: Record<string, number>;
+  historyStack: HistorySnapshot[];
+  cw: string[];
+  cb: string[];
+  mh: MoveRec[];
+  lm: { from: number; to: number } | null;
+  gameMode: 'ai' | 'human';
+  humanColor: 'w' | 'b';
+  flipped: boolean;
+  gameActive: boolean;
+  gameResult: { type: GameResultType; winner: 'w' | 'b' | null } | null;
+  timeRefs: { w: number; b: number };
+  whiteTime: number;
+  blackTime: number;
+  openingName: string;
+}
 
 export const BOARD_THEMES = [
   { id: 'classic', name: 'Klasyk', light: 'linear-gradient(145deg,#f0d9b5 0%,#e8c89a 100%)', dark: 'linear-gradient(145deg,#b58863 0%,#9c7354 100%)' },
@@ -1147,6 +1181,7 @@ export default function App() {
   const puzzleFenRef = useRef('');
   const attemptsRef = useRef(0);
   const puzzleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const puzzleReturnRef = useRef<PuzzleReturnState | null>(null);
   const gameResultRef = useRef<null | { type: GameResultType; winner: 'w' | 'b' | null }>(null);
 
   const [board, setBoard] = useState<(string | null)[]>(Array(64).fill(null));
@@ -1279,7 +1314,7 @@ export default function App() {
     o.start(t); o.stop(t + dur + 0.02);
   };
 
-  const playSound = (type: 'move' | 'capture' | 'castle' | 'promote' | 'check' | 'notify' | 'start' | 'win' | 'lose' | 'draw' | 'tick') => {
+  const playSound = (type: 'move' | 'capture' | 'castle' | 'promote' | 'check' | 'notify' | 'start' | 'win' | 'lose' | 'draw' | 'tick' | 'levelup') => {
     if (!soundOnRef.current) return;
     const ctx = ensureAudio();
     if (!ctx) return;
@@ -1329,6 +1364,30 @@ export default function App() {
           tone(ctx, t + 0.05, 523, 0.16, 0.16 * V, 'sine');
           tone(ctx, t + 0.05, 784, 0.20, 0.13 * V, 'sine');
           break;
+        case 'levelup': {
+          [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((fq, i) => {
+            tone(ctx, t + i * 0.065, fq, 0.16, 0.17 * V, i % 2 ? 'sawtooth' : 'triangle');
+          });
+          const sweep = ctx.createOscillator();
+          const sweepGain = ctx.createGain();
+          const sweepFilter = ctx.createBiquadFilter();
+          sweep.type = 'sawtooth';
+          sweep.frequency.setValueAtTime(320, t);
+          sweep.frequency.exponentialRampToValueAtTime(2400, t + 0.55);
+          sweepFilter.type = 'lowpass';
+          sweepFilter.frequency.setValueAtTime(700, t);
+          sweepFilter.frequency.exponentialRampToValueAtTime(9500, t + 0.5);
+          sweepFilter.Q.value = 5;
+          sweepGain.gain.setValueAtTime(0.0001, t);
+          sweepGain.gain.exponentialRampToValueAtTime(0.13 * V, t + 0.06);
+          sweepGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+          sweep.connect(sweepFilter); sweepFilter.connect(sweepGain); sweepGain.connect(ctx.destination);
+          sweep.start(t); sweep.stop(t + 0.62);
+          [1568, 2093, 2637, 3136].forEach((fq, i) => tone(ctx, t + 0.22 + i * 0.07, fq, 0.22, 0.07 * V, 'sine'));
+          [523.25, 659.25, 783.99, 1046.5].forEach(fq => tone(ctx, t + 0.42, fq, 0.65, 0.10 * V, 'sine'));
+          bell(t + 0.42, 2093, 0.10 * V, 0.8);
+          break;
+        }
         case 'win':
           // Krótki zdecydowany dżingiel jak koniec partii na transmisji
           [523, 659, 784].forEach((fq, i) => tone(ctx, t + i * 0.09, fq, 0.22, 0.24 * V));
@@ -1571,10 +1630,9 @@ export default function App() {
     // W grze z komputerem gracz może mieć dowolny kolor, w grze z człowiekiem
     // zachowano dawną konwencję (białe = wygrana).
     // W treningu matowym każdy mat to sukces gracza, niezależnie od koloru.
-    if (puzzleModeRef.current) {
-      if (type === 'mate') playSound('win');
-      else playSound('draw');
-    } else if (winner === (gameMode === 'ai' ? humanColorRef.current : 'w')) playSound('win');
+    if (type === 'mate') playSound('levelup');
+    else if (puzzleModeRef.current) playSound('draw');
+    else if (winner === (gameMode === 'ai' ? humanColorRef.current : 'w')) playSound('win');
     else if (winner === null) playSound('draw');
     else playSound('lose');
     try { localStorage.removeItem('ad3-save'); } catch { /* ignore */ }
@@ -1781,9 +1839,98 @@ export default function App() {
     return ok;
   };
 
+  const leavePuzzle = (tab: string = 'history') => {
+    clearPuzzleTimer();
+    puzzleModeRef.current = false;
+    puzzleIdxRef.current = -1;
+    puzzleFenRef.current = '';
+    attemptsRef.current = 0;
+    setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg(''); setListMsg('');
+    setSelectedSquare(null); setPossibleMoves([]);
+    setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
+    setPromotionSquare(null);
+    aiMoveTokenRef.current++;
+    stockfish.newGame();
+    engineRunningRef.current = false;
+    setEngineRunning(false);
+    setFlipped(false);
+    const snap = puzzleReturnRef.current;
+    puzzleReturnRef.current = null;
+    if (snap) {
+      boardRef.current = [...snap.board];
+      sideToMoveRef.current = snap.side;
+      castleRef.current = { ...snap.castle };
+      enPassantRef.current = snap.ep;
+      halfmoveRef.current = snap.half;
+      lastProgressRef.current = { ...snap.lastProgress };
+      positionCountsRef.current = { ...snap.positionCounts };
+      historyStackRef.current = snap.historyStack.map(h => ({
+        ...h, board: [...h.board], castle: { ...h.castle },
+        cw: [...h.cw], cb: [...h.cb], mh: [...h.mh],
+        lm: h.lm ? { ...h.lm } : null,
+      }));
+      cwRef.current = [...snap.cw]; cbRef.current = [...snap.cb];
+      mhRef.current = [...snap.mh];
+      setBoard([...snap.board]);
+      setSideToMove(snap.side);
+      setCapturedWhite([...snap.cw]); setCapturedBlack([...snap.cb]);
+      setMoveHistory([...snap.mh]);
+      setLastMove(snap.lm);
+      setGameMode(snap.gameMode);
+      humanColorRef.current = snap.humanColor;
+      setHumanColor(snap.humanColor);
+      gameActiveRef.current = snap.gameActive;
+      setGameActive(snap.gameActive);
+      setGameResult(snap.gameResult);
+      gameResultRef.current = snap.gameResult;
+      timeRefs.current = { ...snap.timeRefs };
+      setWhiteTime(snap.whiteTime); setBlackTime(snap.blackTime);
+      setOpeningName(snap.openingName);
+      setEvalScore({ cp: 25, mate: null });
+    }
+    setActiveTab(tab);
+  };
+
+  const handleTabChange = (tab: string) => {
+    if (tab !== 'puzzles' && puzzleModeRef.current) {
+      leavePuzzle(tab);
+      return;
+    }
+    setActiveTab(tab);
+  };
+
   const startPuzzle = (i: number) => {
     const p = PUZZLES_FROM_LICHESS[i];
     if (!p) return;
+    if (!puzzleModeRef.current) {
+      puzzleReturnRef.current = {
+        board: [...boardRef.current],
+        side: sideToMoveRef.current,
+        castle: { ...castleRef.current },
+        ep: enPassantRef.current,
+        half: halfmoveRef.current,
+        lastProgress: { ...lastProgressRef.current },
+        positionCounts: { ...positionCountsRef.current },
+        historyStack: historyStackRef.current.map(h => ({
+          ...h, board: [...h.board], castle: { ...h.castle },
+          cw: [...h.cw], cb: [...h.cb], mh: [...h.mh],
+          lm: h.lm ? { ...h.lm } : null,
+        })),
+        cw: [...cwRef.current],
+        cb: [...cbRef.current],
+        mh: [...mhRef.current],
+        lm: lastMove ? { ...lastMove } : null,
+        gameMode,
+        humanColor: humanColorRef.current,
+        flipped,
+        gameActive: gameActiveRef.current,
+        gameResult: gameResultRef.current ? { ...gameResultRef.current } : null,
+        timeRefs: { ...timeRefs.current },
+        whiteTime,
+        blackTime,
+        openingName,
+      };
+    }
     puzzleIdxRef.current = i;
     puzzleFenRef.current = p.fen;
     puzzleSideRef.current = (p.fen.split(' ')[1] === 'b' ? 'b' : 'w');
@@ -2581,7 +2728,6 @@ export default function App() {
         .piece-unicode { font-size: clamp(28px, 5vw, 52px); line-height:1; }
         .piece-unicode.white { color:#fafafa; text-shadow: -1px -1px 0 #222, 1px -1px 0 #222, -1px 1px 0 #222, 1px 1px 0 #222, 0 3px 5px rgba(0,0,0,.6); }
         .piece-unicode.black { color:#111; text-shadow: -1px -1px 0 #eee, 1px -1px 0 #eee, -1px 1px 0 #eee, 1px 1px 0 #eee, 0 3px 5px rgba(0,0,0,.6); }
-        .piece-white-svg { filter: brightness(0) invert(1) drop-shadow(0 0 3px rgba(255,255,255,.9)) drop-shadow(0 2px 2px rgba(0,0,0,.6)); }
         .arrows-layer { position:absolute; inset:0; pointer-events:none; z-index:1; filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
         .arrows-layer .annot { animation: annot-in .16s ease-out; }
         @keyframes annot-in { from { opacity: 0; } }
@@ -3128,7 +3274,6 @@ export default function App() {
                           const hasEnemy = piece && possibleMoves.includes(sq);
                           const isCheck = sq === checkSq;
                           const isHint = hintMove && (hintMove.from === sq || hintMove.to === sq);
-                          const isWhitePiece = piece ? piece === piece.toUpperCase() : false;
                           const sqAlg = sqToAlg(sq);
 
                           const doMove = (fromSq: number, toSq: number) => {
@@ -3192,7 +3337,6 @@ export default function App() {
                                     : [...prev, { sq, color }]);
                                 }
                               }}
-                              onMouseDown={e => { if (e.button === 2) arrowStartRef.current = sq; }}
                               onMouseUp={e => {
                                 if (e.button === 2 && arrowStartRef.current !== null && arrowStartRef.current !== sq) {
                                   const a = arrowStartRef.current;
@@ -3204,7 +3348,7 @@ export default function App() {
                               title={sqAlg}
                             >
                               {piece && (
-                                <div className={pieceTheme === 'kingdom' ? 'piece-svg piece-appear' : `piece-svg piece-appear ${isWhitePiece ? 'piece-white-svg' : ''}`} dangerouslySetInnerHTML={{ __html: svgFor(piece) }} />
+                                <div className="piece-svg piece-appear" dangerouslySetInnerHTML={{ __html: svgFor(piece) }} />
                               )}
                               {fi === 0 && <span className="coord-rank">{8 - rank}</span>}
                               {ri === 7 && <span className="coord-file">{String.fromCharCode(97 + file)}</span>}
@@ -3305,7 +3449,7 @@ export default function App() {
                             return <button className="btn" onClick={() => startPuzzle(open[Math.floor(Math.random() * open.length)])}>🎲 Następna losowa</button>;
                           })()}
                           <button className="btn btn-secondary" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
-                          <button className="btn btn-secondary" onClick={() => { setActiveTab('history'); initGame('ai', undefined, undefined, false); }}>🚪 Wyjdź</button>
+                          <button className="btn btn-secondary" onClick={() => leavePuzzle()}>🚪 Wyjdź</button>
                         </div>
                       </div>
                     </div>
@@ -3335,7 +3479,7 @@ export default function App() {
                       }
                       return (
                         <div key={i} className={`captured-piece ${isWhite ? 'tile-w' : 'tile-b'}`} title={title}>
-                          <div className={`cap-svg ${isWhite ? 'piece-white-svg' : ''}`} dangerouslySetInnerHTML={{ __html: pieceSVGs[p] || '' }} />
+                          <div className="cap-svg" dangerouslySetInnerHTML={{ __html: pieceSVGs[p] || '' }} />
                         </div>
                       );
                     };
@@ -3460,7 +3604,7 @@ export default function App() {
                 <button 
                   key={tab}
                   className={`tab ${activeTab === tab ? 'active' : ''}`}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => handleTabChange(tab)}
                 >
                   {tab === 'history' && '📊 '}
                   {tab === 'puzzles' && '🧩 '}
@@ -3619,6 +3763,7 @@ export default function App() {
                   />
                   <span className="text-gray-400 text-xs w-9">{volume}%</span>
                   <button className="btn btn-secondary bottom-btn" onClick={() => playSound('move')}>▶️ Test</button>
+                  <button className="btn btn-secondary bottom-btn" onClick={() => playSound('levelup')}>🏆 Mat</button>
                 </label>
                 <div>
                   <div className="text-gray-300 mb-1">🎨 Motyw planszy:</div>
@@ -3674,18 +3819,7 @@ export default function App() {
                         onClick={() => { showHint(); setPuzzleMsg(`💡 Podpowiedź na szachownicy powyżej!`); }}
                       >💡 Podpowiedź</button>
                     <button className="btn btn-secondary bottom-btn" onClick={() => { restorePuzzleFen(); setPuzzleMsg(`🔁 Zagadka zresetowana. 💡 ${PUZZLES_FROM_LICHESS[puzzleUi.idx]?.tip || ''}`); }}>🔄 Resetuj zagadkę</button>
-                    <button className="btn btn-secondary bottom-btn" onClick={() => {
-                      puzzleModeRef.current = false;
-                      puzzleIdxRef.current = -1;
-                      setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
-                      setSelectedSquare(null); setPossibleMoves([]);
-                      setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
-                      humanColorRef.current = 'w';
-                      setHumanColor('w');
-                      setFlipped(false);
-                      setActiveTab('history');
-                      initGame('ai', undefined, 'w', false);
-                    }}>🚪 Opuść trening</button>
+                    <button className="btn btn-secondary bottom-btn" onClick={() => leavePuzzle()}>🚪 Opuść trening</button>
                   </div>
                   <div className="text-center text-gray-500 text-xs mt-4">
                     Plansza powyżej — wykonaj ruch stukając w figurę, a potem w pole docelowe.
