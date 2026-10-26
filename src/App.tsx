@@ -604,6 +604,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(readSessionTab);
   const [promotionSquare, setPromotionSquare] = useState<{square: number, isWhite: boolean} | null>(null);
   const [gameResult, setGameResult] = useState<null | { type: GameResultType, winner: 'w' | 'b' | null }>(null);
+  const [resultOverlayHidden, setResultOverlayHidden] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [volume, setVolume] = useState(80);
   const [timeControl, setTimeControl] = useState(5);
@@ -1049,6 +1050,7 @@ export default function App() {
 
   const finishGame = (type: GameResultType, winner: 'w' | 'b' | null) => {
     setGameResult({ type, winner });
+    setResultOverlayHidden(false);
     gameResultRef.current = { type, winner };
     // Dźwięk z perspektywy gracza: wygrana / przegrana / remis.
     // W grze z komputerem gracz może mieć dowolny kolor, w grze z człowiekiem
@@ -1118,6 +1120,7 @@ export default function App() {
     setEngineRunning(false);
     setGameResult(null);
     gameResultRef.current = null;
+    setResultOverlayHidden(false);
     clearPuzzleTimer();
     clearPuzzleActionsTimer();
     setPuzzleActionsReady(false);
@@ -1165,6 +1168,7 @@ export default function App() {
     gameActiveRef.current = true; setGameActive(true);
     setGameResult(null);
     gameResultRef.current = null;
+    setResultOverlayHidden(false);
     setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
     updateOpening(snap.mh);
     playSound('move');
@@ -1323,6 +1327,7 @@ export default function App() {
       setGameActive(snap.gameActive);
       setGameResult(snap.gameResult);
       gameResultRef.current = snap.gameResult;
+      setResultOverlayHidden(false);
       timeRefs.current = { ...snap.timeRefs };
       setWhiteTime(snap.whiteTime); setBlackTime(snap.blackTime);
       setOpeningName(snap.openingName);
@@ -2877,7 +2882,7 @@ export default function App() {
                       })()}
                     </svg>
                   </div>
-                  {gameResult && !(puzzleUi && puzzleSolved) && (
+                  {gameResult && !resultOverlayHidden && !(puzzleUi && puzzleSolved) && (
                     <div className="mate-overlay">
                       <div className="mate-card">
                         <div className="mate-trophy">{gameResult.type === 'mate' ? '🏆' : gameResult.type === 'resign' ? '🏳️' : gameResult.type === 'timeout' ? '⏱️' : '🤝'}</div>
@@ -2894,7 +2899,10 @@ export default function App() {
                             : gameResult.type === 'draw-material' ? 'Za mało materiału do mata.'
                             : 'Zgoda na remis.'}
                         </div>
-                        <button className="btn" onClick={() => initGame()}>🎮 Nowa Gra</button>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <button className="btn" onClick={() => initGame()}>🎮 Nowa Gra</button>
+                          <button className="btn btn-secondary" onClick={() => { setResultOverlayHidden(true); setActiveTab('history'); }}>🔍 Podgląd partii</button>
+                        </div>
                       </div>
                     </div>
                   )}
