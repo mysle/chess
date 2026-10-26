@@ -3159,7 +3159,7 @@ export default function App() {
 
               <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
                 <button className="btn btn-secondary bottom-btn" onClick={() => downloadTextFile('fen.txt', boardToFEN())}>💾 Zapisz FEN do pliku tekstowego</button>
-                <button className="btn btn-secondary bottom-btn" onClick={() => downloadTextFile('partia.pgn', buildPGN(), 'application/x-chess-pgn;charset=utf-8')}>💾 Zapisz PGN do pliku tekstowego</button>
+                <button className="btn btn-secondary bottom-btn" onClick={() => downloadTextFile('partia.pgn', buildPGN(), 'application/x-chess-pgn;charset=utf-8')}>💾 Zapisz PGN do pliku PGN</button>
               </div>
               
               <div style={{ marginTop: 12 }}>
