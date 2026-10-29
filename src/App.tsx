@@ -811,6 +811,9 @@ export default function App() {
       if (pz) setSolvedPuzzles(JSON.parse(pz));
     } catch { /* ignore */ }
     initGame('ai', undefined, undefined, true, true);
+    // Zablokuj automatyczne ruchy AI na start - stan zostanie przywrócony przez przycisk Odśwież
+    engineRunningRef.current = false;
+    setEngineRunning(false);
     // Silnik Stockfish ładuj w tle (nie blokuj startu planszy)
     const offEngineStatus = stockfish.onStatus((s) => setEngineStatus(s));
     stockfish.ensureReady().catch(() => {});
@@ -818,8 +821,68 @@ export default function App() {
     return () => offEngineStatus();
   }, []);
 
-  // 📱 Po przeładowaniu karty wróć do przerwanej zagadki zamiast zaczynać od nowa.
+  // 📱 Po przeładowaniu karty wróć do zapisanej pozycji planszy z localStorage.
   useEffect(() => {
+    try {
+      const savedFen = localStorage.getItem('bcz-chess-position');
+      const savedHumanColor = localStorage.getItem('bcz-chess-human-color');
+      const savedFlipped = localStorage.getItem('bcz-chess-flipped');
+      const savedGameMode = localStorage.getItem('bcz-chess-gamemode');
+      const savedNewOpponent = localStorage.getItem('bcz-chess-newopponent');
+      const savedNewColor = localStorage.getItem('bcz-chess-newcolor');
+      const savedHistory = localStorage.getItem('bcz-chess-history');
+      const savedMoves = localStorage.getItem('bcz-chess-moves');
+      
+      if (savedFen) {
+        const parsed = parseFENBoard(savedFen);
+        if (parsed) {
+          boardRef.current = parsed.board;
+          sideToMoveRef.current = parsed.side;
+          castleRef.current = parsed.castle;
+          enPassantRef.current = parsed.ep;
+          halfmoveRef.current = 0;
+          lastProgressRef.current = { kind: 'start', san: '' };
+          positionCountsRef.current = {};
+          historyStackRef.current = [];
+          const secs = timeControl * 60;
+          timeRefs.current = { w: secs, b: secs };
+          setWhiteTime(secs); setBlackTime(secs);
+          setBoard([...parsed.board]); setSideToMove(parsed.side);
+          mhRef.current = [];
+          setMoveHistory([]); setSelectedSquare(null); setPossibleMoves([]);
+          setLastMove(null); setSelectedSquare(null); setPossibleMoves([]);
+          setLastMove(null);
+          cwRef.current = []; cbRef.current = [];
+          setCapturedWhite([]); setCapturedBlack([]);
+          setGameActive(true); setEngineRunning(false);
+          setGameResult(null); gameResultRef.current = null;
+          setResultOverlayHidden(false);
+          clearPuzzleTimer(); clearPuzzleActionsTimer(); setPuzzleActionsReady(false);
+          puzzleModeRef.current = false;
+          clearPuzzleSession();
+          setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
+          setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
+          setOpeningName(''); setFenBox('');
+          recordPosition();
+          aiMoveTokenRef.current++;
+          stockfish.newGame();
+          setEvalScore({ cp: 25, mate: null });
+          // Przywróć kolor gracza i orientację planszy
+          if (savedHumanColor !== null) { humanColorRef.current = savedHumanColor; setHumanColor(savedHumanColor); }
+          if (savedFlipped !== null) { setFlipped(savedFlipped === 'true'); }
+          // Przywróć tryb gry i ustawienia przeciwnika
+          if (savedGameMode !== null) { setGameMode(savedGameMode); }
+          if (savedNewOpponent !== null) { setNewOpponent(savedNewOpponent); }
+          if (savedNewColor !== null) { setNewColor(savedNewColor); }
+          // WAŻNE: wyłączamy silnik i upewniamy się, że nie zostanie uruchomiony
+          engineRunningRef.current = false;
+          setEngineRunning(false);
+          // Przywróć historię ruchów i stan partii
+          if (savedHistory !== null) { historyStackRef.current = JSON.parse(savedHistory); }
+          if (savedMoves !== null) { mhRef.current = JSON.parse(savedMoves); }
+        }
+      }
+    } catch { /* ignore */ }
     if (puzzleSessionRestoredRef.current) return;
     puzzleSessionRestoredRef.current = true;
     const idx = readPuzzleSession();
@@ -3033,6 +3096,7 @@ export default function App() {
                       <button type="button" className="action-btn" onClick={showHint} title="Pokaż podpowiedź komputera (najlepszy ruch)" aria-label="Podpowiedź"><span className="act-ico">💡</span>Podpowiedź</button>
                       <button type="button" className="action-btn" onClick={offerDraw} title="Zaproponuj remis" aria-label="Zaproponuj remis"><span className="act-ico">🤝</span>Remis</button>
                       <button type="button" className="action-btn danger" onClick={resignGame} title="Poddaj partię" aria-label="Poddaj partię"><span className="act-ico">🏳️</span>Poddaj</button>
+                      <button type="button" className="action-btn" onClick={() => { try { localStorage.setItem('bcz-chess-position', boardToFEN()); localStorage.setItem('bcz-chess-human-color', humanColorRef.current); localStorage.setItem('bcz-chess-flipped', String(flipped)); localStorage.setItem('bcz-chess-gamemode', gameMode); localStorage.setItem('bcz-chess-newopponent', newOpponent); localStorage.setItem('bcz-chess-newcolor', newColor); localStorage.setItem('bcz-chess-history', JSON.stringify(historyStackRef.current)); localStorage.setItem('bcz-chess-moves', JSON.stringify([...mhRef.current])); } catch { /* ignore */ } window.location.reload(); }} title="Odśwież stronę z zachowaniem pozycji" aria-label="Odśwież stronę z zachowaniem pozycji szach"><span className="act-ico">🔄</span>Odśwież</button>
                       <button type="button" className="action-btn" onClick={() => { setArrows([]); setCircles([]); setArrowPending(null); }} title="Wyczyść strzałki i kółka z planszy" aria-label="Wyczyść adnotacje"><span className="act-ico">🧹</span>Wyczyść</button>
                     </div>
                   </div>
