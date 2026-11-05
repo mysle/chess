@@ -553,6 +553,7 @@ export default function App() {
   const lastProgressRef = useRef<{ kind: 'start' | 'pawn' | 'capture'; san: string }>({ kind: 'start', san: '' });
   const positionCountsRef = useRef<Record<string, number>>({});
   const historyStackRef = useRef<{ board: (string | null)[]; side: 'w' | 'b'; castle: { wk: boolean; wq: boolean; bk: boolean; bq: boolean }; ep: number; half: number; cw: string[]; cb: string[]; mh: MoveRec[]; lm: { from: number; to: number } | null }[]>([]);
+  const redoStackRef = useRef<{ board: (string | null)[]; side: 'w' | 'b'; castle: { wk: boolean; wq: boolean; bk: boolean; bq: boolean }; ep: number; half: number; cw: string[]; cb: string[]; mh: MoveRec[]; lm: { from: number; to: number } | null }[]>([]);
   const soundOnRef = useRef(true);
   // Lustra stanów dla logiki asynchronicznej (AI odpowiada 400ms później):
   // chronią historię, zbicia i autosave przed nieaktualnymi domknięciami
@@ -574,6 +575,25 @@ export default function App() {
   const puzzleActionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const puzzleReturnRef = useRef<PuzzleReturnState | null>(null);
   const puzzleSessionRestoredRef = useRef(false);
+  const restoredRef = useRef(false);
+  // 📸 Migawka zapisanej partii pobrana RAZ, zanim cokolwiek zainicjujemy.
+  // React StrictMode uruchamia efekty montowania dwukrotnie — bez tej migawki
+  // drugi przebieg czytałby localStorage nadpisany już stanem nowej partii.
+  const savedGameRef = useRef<null | {
+    fen: string;
+    humanColor: string | null;
+    flipped: string | null;
+    gameMode: string | null;
+    newOpponent: string | null;
+    newColor: string | null;
+    history: string | null;
+    moves: string | null;
+    cw: string | null;
+    cb: string | null;
+    wt: string | null;
+    bt: string | null;
+    opening: string | null;
+  } | undefined>(undefined);
   const gameResultRef = useRef<null | { type: GameResultType; winner: 'w' | 'b' | null }>(null);
 
   const [board, setBoard] = useState<(string | null)[]>(Array(64).fill(null));
@@ -599,6 +619,16 @@ export default function App() {
   const [newOpponent, setNewOpponent] = useState<'ai' | 'human'>('ai');
   const [newColor, setNewColor] = useState<'w' | 'b' | 'random'>('w');
   const [autoFlip, setAutoFlip] = useState(false);
+  // Refy "zapisywalnych" ustawień — autozapis korzysta z nich zamiast domknięć
+  // z pierwszego renderu, dzięki czemu nie zapisze nieaktualnej orientacji/trybu.
+  const flippedRef = useRef(false);
+  const gameModeRef = useRef<'ai' | 'human'>('ai');
+  const newOpponentRef = useRef<'ai' | 'human'>('ai');
+  const newColorRef = useRef<'w' | 'b' | 'random'>('w');
+  flippedRef.current = flipped;
+  gameModeRef.current = gameMode;
+  newOpponentRef.current = newOpponent;
+  newColorRef.current = newColor;
   const [showLegalMoves, setShowLegalMoves] = useState(true);
   const [engineRunning, setEngineRunning] = useState(false);
   const [activeTab, setActiveTab] = useState(readSessionTab);
@@ -608,6 +638,8 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [volume, setVolume] = useState(80);
   const [timeControl, setTimeControl] = useState(5);
+  const [customTime, setCustomTime] = useState('');
+  const [customSeconds, setCustomSeconds] = useState('');
   const [whiteTime, setWhiteTime] = useState(300);
   const [blackTime, setBlackTime] = useState(300);
   const [boardTheme, setBoardTheme] = useState('classic');
@@ -619,6 +651,8 @@ export default function App() {
   const [hintMove, setHintMove] = useState<{ from: number; to: number } | null>(null);
   const [fenBox, setFenBox] = useState('');
   const [openingName, setOpeningName] = useState('');
+  const openingNameRef = useRef('');
+  useEffect(() => { openingNameRef.current = openingName; }, [openingName]);
   const [puzzleUi, setPuzzleUi] = useState<{ idx: number } | null>(null);
   const [puzzleSolved, setPuzzleSolved] = useState(false);
   const [puzzleActionsReady, setPuzzleActionsReady] = useState(true);
@@ -810,8 +844,41 @@ export default function App() {
       const pz = localStorage.getItem('ad3-puzzles5');
       if (pz) setSolvedPuzzles(JSON.parse(pz));
     } catch { /* ignore */ }
-    initGame('ai', undefined, undefined, true, true);
-    // Zablokuj automatyczne ruchy AI na start - stan zostanie przywrócony przez przycisk Odśwież
+
+    // 📸 Pobierz zapis partii tylko raz (StrictMode wywołuje ten efekt dwukrotnie).
+    if (savedGameRef.current === undefined) {
+      try {
+        const fen = localStorage.getItem('bcz-chess-position');
+        savedGameRef.current = fen ? {
+          fen,
+          humanColor: localStorage.getItem('bcz-chess-human-color'),
+          flipped: localStorage.getItem('bcz-chess-flipped'),
+          gameMode: localStorage.getItem('bcz-chess-gamemode'),
+          newOpponent: localStorage.getItem('bcz-chess-newopponent'),
+          newColor: localStorage.getItem('bcz-chess-newcolor'),
+          history: localStorage.getItem('bcz-chess-history'),
+          moves: localStorage.getItem('bcz-chess-moves'),
+          cw: localStorage.getItem('bcz-chess-cw'),
+          cb: localStorage.getItem('bcz-chess-cb'),
+          wt: localStorage.getItem('bcz-chess-wt'),
+          bt: localStorage.getItem('bcz-chess-bt'),
+          opening: localStorage.getItem('bcz-chess-opening'),
+        } : null;
+      } catch { savedGameRef.current = null; }
+    }
+
+    const savedFenBoard = savedGameRef.current?.fen?.trim().split(/\s+/)[0] || '';
+    const hasValidSavedGame = !!savedGameRef.current && savedFenBoard.split('/').length === 8;
+
+    if (hasValidSavedGame) {
+      // Jest zapisana partia — NIE resetuj planszy (restore niżej ją odtworzy).
+      // To także blokuje przypadkowy ruch AI dla strony gracza po odświeżeniu.
+      gameActiveRef.current = true;
+      setGameActive(true);
+    } else {
+      initGame('ai', undefined, undefined, true, true);
+    }
+    // Zablokuj automatyczne ruchy AI na start - stan zostanie przywrócony z zapisu
     engineRunningRef.current = false;
     setEngineRunning(false);
     // Silnik Stockfish ładuj w tle (nie blokuj startu planszy)
@@ -823,19 +890,16 @@ export default function App() {
 
   // 📱 Po przeładowaniu karty wróć do zapisanej pozycji planszy z localStorage.
   useEffect(() => {
-    try {
-      const savedFen = localStorage.getItem('bcz-chess-position');
-      const savedHumanColor = localStorage.getItem('bcz-chess-human-color');
-      const savedFlipped = localStorage.getItem('bcz-chess-flipped');
-      const savedGameMode = localStorage.getItem('bcz-chess-gamemode');
-      const savedNewOpponent = localStorage.getItem('bcz-chess-newopponent');
-      const savedNewColor = localStorage.getItem('bcz-chess-newcolor');
-      const savedHistory = localStorage.getItem('bcz-chess-history');
-      const savedMoves = localStorage.getItem('bcz-chess-moves');
-      
-      if (savedFen) {
-        const parsed = parseFENBoard(savedFen);
+    // Najpierw wyłącz autozapis, żeby nie nadpisał zapisu stanem sprzed restore.
+    restoredRef.current = false;
+
+    const saved = savedGameRef.current;
+    let resumeAI = false;
+    if (saved && saved.fen) {
+      try {
+        const parsed = parseFENBoard(saved.fen);
         if (parsed) {
+          // 1. Przywróć planszę i podstawowe właściwości
           boardRef.current = parsed.board;
           sideToMoveRef.current = parsed.side;
           castleRef.current = parsed.castle;
@@ -844,16 +908,46 @@ export default function App() {
           lastProgressRef.current = { kind: 'start', san: '' };
           positionCountsRef.current = {};
           historyStackRef.current = [];
-          const secs = timeControl * 60;
-          timeRefs.current = { w: secs, b: secs };
-          setWhiteTime(secs); setBlackTime(secs);
-          setBoard([...parsed.board]); setSideToMove(parsed.side);
-          mhRef.current = [];
-          setMoveHistory([]); setSelectedSquare(null); setPossibleMoves([]);
-          setLastMove(null); setSelectedSquare(null); setPossibleMoves([]);
-          setLastMove(null);
-          cwRef.current = []; cbRef.current = [];
-          setCapturedWhite([]); setCapturedBlack([]);
+          // Odśwież widoczną planszę i stronę do ruchu
+          setBoard([...parsed.board]);
+          setSideToMove(parsed.side);
+
+          // 2. Przywróć zegary z localStorage
+          const w = saved.wt ? parseInt(saved.wt, 10) : timeControl * 60;
+          const b = saved.bt ? parseInt(saved.bt, 10) : timeControl * 60;
+          timeRefs.current = { w, b };
+          setWhiteTime(w); setBlackTime(b);
+
+          // 3. Przywróć historię ruchów i wyciągnij zbite bierki
+          let restoredMoves: any[] = [];
+          let restoredHistory: any[] = [];
+          try { restoredMoves = saved.moves ? JSON.parse(saved.moves) : []; } catch { restoredMoves = []; }
+          try { restoredHistory = saved.history ? JSON.parse(saved.history) : []; } catch { restoredHistory = []; }
+
+          mhRef.current = restoredMoves;
+          historyStackRef.current = restoredHistory;
+
+          let capturedWhite: any[] = []; let capturedBlack: any[] = [];
+          try { capturedWhite = saved.cw ? JSON.parse(saved.cw) : []; } catch { capturedWhite = []; }
+          try { capturedBlack = saved.cb ? JSON.parse(saved.cb) : []; } catch { capturedBlack = []; }
+          if (capturedWhite.length === 0 && capturedBlack.length === 0) {
+            restoredMoves.forEach((m: any) => {
+              if (m && typeof m === 'object') {
+                if (m.captured === 'w') capturedWhite.push(m);
+                if (m.captured === 'b') capturedBlack.push(m);
+              }
+            });
+          }
+          cwRef.current = capturedWhite;
+          cbRef.current = capturedBlack;
+          setCapturedWhite(capturedWhite); setCapturedBlack(capturedBlack);
+
+          // 4. Ustaw komponentowe stan
+          setMoveHistory([...restoredMoves]);
+          setSelectedSquare(null); setPossibleMoves([]);
+          const lastRec: any = restoredMoves.length > 0 ? restoredMoves[restoredMoves.length - 1] : null;
+          setLastMove(lastRec && typeof lastRec.from === 'number' && typeof lastRec.to === 'number' ? { from: lastRec.from, to: lastRec.to } : null);
+          gameActiveRef.current = true;
           setGameActive(true); setEngineRunning(false);
           setGameResult(null); gameResultRef.current = null;
           setResultOverlayHidden(false);
@@ -863,32 +957,91 @@ export default function App() {
           setPuzzleUi(null); setPuzzleSolved(false); setPuzzleMsg('');
           setArrows([]); setCircles([]); setHintMove(null); setArrowPending(null);
           setOpeningName(''); setFenBox('');
-          recordPosition();
-          aiMoveTokenRef.current++;
-          stockfish.newGame();
-          setEvalScore({ cp: 25, mate: null });
-          // Przywróć kolor gracza i orientację planszy
-          if (savedHumanColor !== null) { humanColorRef.current = savedHumanColor; setHumanColor(savedHumanColor); }
-          if (savedFlipped !== null) { setFlipped(savedFlipped === 'true'); }
-          // Przywróć tryb gry i ustawienia przeciwnika
-          if (savedGameMode !== null) { setGameMode(savedGameMode); }
-          if (savedNewOpponent !== null) { setNewOpponent(savedNewOpponent); }
-          if (savedNewColor !== null) { setNewColor(savedNewColor); }
-          // WAŻNE: wyłączamy silnik i upewniamy się, że nie zostanie uruchomiony
-          engineRunningRef.current = false;
-          setEngineRunning(false);
-          // Przywróć historię ruchów i stan partii
-          if (savedHistory !== null) { historyStackRef.current = JSON.parse(savedHistory); }
-          if (savedMoves !== null) { mhRef.current = JSON.parse(savedMoves); }
+          setTimeout(() => updateOpening(restoredMoves), 0);
+
+          // 5. Przywróć tryb gry, kolor gracza i orientację planszy
+          const restoredMode: 'ai' | 'human' = saved.gameMode === 'human' ? 'human' : 'ai';
+          const restoredHuman: 'w' | 'b' = saved.humanColor === 'b' ? 'b' : 'w';
+          // W grze z komputerem orientacja planszy zawsze odpowiada stronie gracza.
+          // (Starsze wersje mogły zapisać flipped=false mimo gry czarnymi.)
+          const restoredFlipped = restoredMode === 'ai'
+            ? restoredHuman === 'b'
+            : saved.flipped === 'true';
+
+          humanColorRef.current = restoredHuman;
+          setHumanColor(restoredHuman);
+          setFlipped(restoredFlipped);
+          flippedRef.current = restoredFlipped;
+
+          setGameMode(restoredMode);
+          gameModeRef.current = restoredMode;
+          const restoredOpponent: 'ai' | 'human' = saved.newOpponent === 'human' ? 'human' : 'ai';
+          const restoredNewColor: 'w' | 'b' | 'random' = saved.newColor === 'b' ? 'b' : saved.newColor === 'random' ? 'random' : 'w';
+          setNewOpponent(restoredOpponent);
+          newOpponentRef.current = restoredOpponent;
+          setNewColor(restoredNewColor);
+          newColorRef.current = restoredNewColor;
+          // Jeżeli po przywróceniu przypada tura komputera, dokończy ją po chwili.
+          resumeAI = restoredMode === 'ai' && restoredHuman !== parsed.side && difficulty > 0;
+          // UWAGA: stockfish.newGame() pominięty - zachowujemy restored pozycję
         }
-      }
-    } catch { /* ignore */ }
-    if (puzzleSessionRestoredRef.current) return;
-    puzzleSessionRestoredRef.current = true;
-    const idx = readPuzzleSession();
-    if (idx !== null) startPuzzle(idx);
+      } catch { /* ignore */ }
+    }
+
+    // Autozapis włącz dopiero po przetworzeniu przywróconego stanu.
+    const readyTimer = window.setTimeout(() => { restoredRef.current = true; }, 0);
+    let aiTimer: number | null = null;
+    if (resumeAI) {
+      const token = aiMoveTokenRef.current;
+      engineRunningRef.current = true;
+      setEngineRunning(true);
+      aiTimer = window.setTimeout(() => {
+        if (token === aiMoveTokenRef.current && gameActiveRef.current && gameModeRef.current === 'ai'
+          && sideToMoveRef.current !== humanColorRef.current) {
+          makeAIMove();
+        }
+      }, 800);
+    }
+
+    if (!puzzleSessionRestoredRef.current) {
+      puzzleSessionRestoredRef.current = true;
+      const idx = readPuzzleSession();
+      if (idx !== null) startPuzzle(idx);
+    }
+    return () => {
+      window.clearTimeout(readyTimer);
+      if (aiTimer !== null) window.clearTimeout(aiTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 💾 Automatyczny zapis stanu partii (pozycja, ruchy, straty, czas)
+  // Dzięki temu zwykłe odświeżenie strony (F5) też przywraca grę.
+  useEffect(() => {
+    const saveNow = () => {
+      if (!restoredRef.current || !gameActiveRef.current) return;
+      try {
+        localStorage.setItem('bcz-chess-position', boardToFEN());
+        localStorage.setItem('bcz-chess-human-color', humanColorRef.current);
+        localStorage.setItem('bcz-chess-flipped', String(flippedRef.current));
+        localStorage.setItem('bcz-chess-gamemode', gameModeRef.current);
+        localStorage.setItem('bcz-chess-newopponent', newOpponentRef.current);
+        localStorage.setItem('bcz-chess-newcolor', newColorRef.current);
+        localStorage.setItem('bcz-chess-history', JSON.stringify(historyStackRef.current));
+        localStorage.setItem('bcz-chess-moves', JSON.stringify([...mhRef.current]));
+        localStorage.setItem('bcz-chess-cw', JSON.stringify([...cwRef.current]));
+        localStorage.setItem('bcz-chess-cb', JSON.stringify([...cbRef.current]));
+        localStorage.setItem('bcz-chess-wt', String(timeRefs.current.w));
+        localStorage.setItem('bcz-chess-bt', String(timeRefs.current.b));
+        localStorage.setItem('bcz-chess-opening', openingNameRef.current);
+      } catch { /* ignore */ }
+    };
+    saveNow();
+    const id = setInterval(saveNow, 1000);
+    window.addEventListener('beforeunload', saveNow);
+    return () => { clearInterval(id); window.removeEventListener('beforeunload', saveNow); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board, moveHistory, capturedWhite, capturedBlack, sideToMove, gameMode, humanColor, flipped, gameActive, timeControl, newOpponent, newColor]);
 
   // 📱 Zapamiętaj ostatnią zakładkę (Analiza / Zagadki / Opcje).
   useEffect(() => {
@@ -984,7 +1137,7 @@ export default function App() {
   const loadFEN = (fen: string, skipAIMove = false): boolean => {
     const parsed = parseFENBoard(fen);
     if (!parsed) return false;
-    pushHistory();
+    pushHistory(); redoStackRef.current = [];
     boardRef.current = parsed.board;
     sideToMoveRef.current = parsed.side;
     castleRef.current = parsed.castle;
@@ -1033,9 +1186,9 @@ export default function App() {
 
   const buildPGN = (): string => {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
-    const whiteName = gameMode === 'ai' ? (humanColorRef.current === 'w' ? 'Gracz' : '♔♚ 👑 Bąbel Chess 👑🏁♚♔') : 'Gracz';
-    const blackName = gameMode === 'ai' ? (humanColorRef.current === 'b' ? 'Gracz' : '♔♚ 👑 Bąbel Chess 👑🏁♚♔') : '♔♚ 👑 Bąbel Chess 👑🏁♚♔';
-    let res = `[Event "♔♚ 👑 Bąbel Chess 👑🏁♚♔"]\n[Site "Browser"]\n[Date "${date}"]\n[White "${whiteName}"]\n[Black "${blackName}"]\n[Result "${gameResult ? (gameResult.winner === 'w' ? '1-0' : gameResult.winner === 'b' ? '0-1' : '1/2-1/2') : '*'}"]\n[FEN "${boardToFEN()}"]\n\n`;
+    const whiteName = gameMode === 'ai' ? (humanColorRef.current === 'w' ? 'Gracz' : '♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔') : 'Gracz';
+    const blackName = gameMode === 'ai' ? (humanColorRef.current === 'b' ? 'Gracz' : '♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔') : '♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔';
+    let res = `[Event "♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔"]\n[Site "Browser"]\n[Date "${date}"]\n[White "${whiteName}"]\n[Black "${blackName}"]\n[Result "${gameResult ? (gameResult.winner === 'w' ? '1-0' : gameResult.winner === 'b' ? '0-1' : '1/2-1/2') : '*'}"]\n[FEN "${boardToFEN()}"]\n\n`;
     moveHistory.forEach((m, i) => {
       if (i % 2 === 0) res += `${Math.floor(i / 2) + 1}. `;
       res += `${m.san} `;
@@ -1105,10 +1258,16 @@ export default function App() {
         g1h3: 'Debiut Amara (1.Sh3)', a2a4: "Debiut Ware'a (1.a4)",
         b1a3: 'Debiut Durkina (1.Sa3)', f2f3: 'Otwarcie Barnesa (1.f3)',
       };
-      setOpeningName(first[sqToAlg(mh[0].from) + sqToAlg(mh[0].to)] || '');
+      const firstMove = sqToAlg(mh[0].from) + sqToAlg(mh[0].to);
+      setOpeningName(first[firstMove] || `Otwarcie (${firstMove})`);
       return;
     }
-    setOpeningName('');
+    if (mh.length >= 1) {
+      const firstMove = sqToAlg(mh[0].from) + sqToAlg(mh[0].to);
+      setOpeningName(`Otwarcie (${firstMove})`);
+    } else {
+      setOpeningName('');
+    }
   };
 
   const finishGame = (type: GameResultType, winner: 'w' | 'b' | null) => {
@@ -1209,6 +1368,7 @@ export default function App() {
 
   const undoMove = () => {
     if (engineRunningRef.current || historyStackRef.current.length === 0 || puzzleModeRef.current) return;
+    redoStackRef.current.push({ board: [...boardRef.current], side: sideToMoveRef.current, castle: { ...castleRef.current }, ep: enPassantRef.current, half: halfmoveRef.current, cw: [...cwRef.current], cb: [...cbRef.current], mh: [...mhRef.current], lm: lastMove ? { ...lastMove } : null });
     // Cofnij do ostatniego ruchu GRACZA (jego kolor, nie zawsze białe): 1 lub 2 półruchy.
     // Po cofnięciu samego ruchu gracza jest ruch AI - cofnij wtedy też odpowiedź AI.
     let snap = historyStackRef.current.pop();
@@ -1243,6 +1403,54 @@ export default function App() {
       setTimeout(() => makeAIMove(), 400);
     }
   };
+
+  const redoMove = () => {
+    if (engineRunningRef.current || redoStackRef.current.length === 0 || puzzleModeRef.current) return;
+    const snap = redoStackRef.current.pop();
+    if (!snap) return;
+    historyStackRef.current.push({ board: [...boardRef.current], side: sideToMoveRef.current, castle: { ...castleRef.current }, ep: enPassantRef.current, half: halfmoveRef.current, cw: [...cwRef.current], cb: [...cbRef.current], mh: [...mhRef.current], lm: lastMove ? { ...lastMove } : null });
+    boardRef.current = [...snap.board]; sideToMoveRef.current = snap.side; castleRef.current = { ...snap.castle };
+    enPassantRef.current = snap.ep; halfmoveRef.current = snap.half;
+    cwRef.current = [...snap.cw]; cbRef.current = [...snap.cb];
+    setCapturedWhite([...snap.cw]); setCapturedBlack([...snap.cb]);
+    mhRef.current = [...snap.mh]; setMoveHistory([...snap.mh]);
+    setLastMove(snap.lm); setBoard([...snap.board]); setSideToMove(snap.side);
+    setSelectedSquare(null); setPossibleMoves([]);
+    updateOpening(snap.mh); playSound('move');
+  };
+  const navUndo = () => {
+    if (engineRunningRef.current || historyStackRef.current.length === 0 || puzzleModeRef.current) return;
+    redoStackRef.current.push({ board: [...boardRef.current], side: sideToMoveRef.current, castle: { ...castleRef.current }, ep: enPassantRef.current, half: halfmoveRef.current, cw: [...cwRef.current], cb: [...cbRef.current], mh: [...mhRef.current], lm: lastMove ? { ...lastMove } : null });
+    const snap = historyStackRef.current.pop();
+    if (!snap) return;
+    boardRef.current = [...snap.board]; sideToMoveRef.current = snap.side; castleRef.current = { ...snap.castle };
+    enPassantRef.current = snap.ep; halfmoveRef.current = snap.half;
+    cwRef.current = [...snap.cw]; cbRef.current = [...snap.cb];
+    setCapturedWhite([...snap.cw]); setCapturedBlack([...snap.cb]);
+    mhRef.current = [...snap.mh]; setMoveHistory([...snap.mh]);
+    setLastMove(snap.lm); setBoard([...snap.board]); setSideToMove(snap.side);
+    setSelectedSquare(null); setPossibleMoves([]);
+    updateOpening(snap.mh); playSound('move');
+  };
+  const navRedo = () => {
+    if (engineRunningRef.current || redoStackRef.current.length === 0 || puzzleModeRef.current) return;
+    const snap = redoStackRef.current.pop();
+    if (!snap) return;
+    historyStackRef.current.push({ board: [...boardRef.current], side: sideToMoveRef.current, castle: { ...castleRef.current }, ep: enPassantRef.current, half: halfmoveRef.current, cw: [...cwRef.current], cb: [...cbRef.current], mh: [...mhRef.current], lm: lastMove ? { ...lastMove } : null });
+    boardRef.current = [...snap.board]; sideToMoveRef.current = snap.side; castleRef.current = { ...snap.castle };
+    enPassantRef.current = snap.ep; halfmoveRef.current = snap.half;
+    cwRef.current = [...snap.cw]; cbRef.current = [...snap.cb];
+    setCapturedWhite([...snap.cw]); setCapturedBlack([...snap.cb]);
+    mhRef.current = [...snap.mh]; setMoveHistory([...snap.mh]);
+    setLastMove(snap.lm); setBoard([...snap.board]); setSideToMove(snap.side);
+    setSelectedSquare(null); setPossibleMoves([]);
+    updateOpening(snap.mh); playSound('move');
+  };
+  const navUndoAll = () => { while (historyStackRef.current.length > 0) navUndo(); };
+  const navRedoAll = () => { while (redoStackRef.current.length > 0) navRedo(); };
+
+  const undoAll = () => { while (historyStackRef.current.length > 0) undoMove(); };
+  const redoAll = () => { while (redoStackRef.current.length > 0) redoMove(); };
 
   const resignGame = () => {
     if (!gameActiveRef.current || puzzleModeRef.current) return;
@@ -1825,7 +2033,7 @@ export default function App() {
     const isCapture = !!captured || isEp;
     const isCastle = pieceType === 'K' && Math.abs(to - from) === 2;
     const baseSan = buildBaseSAN(from, to, piece, promotion, isCapture);
-    pushHistory();
+    pushHistory(); redoStackRef.current = [];
     
     if (isCastle) {
       if (isWhite) {
@@ -1957,7 +2165,7 @@ export default function App() {
       const isEpMove = piece === aiPawn && bestMove.to === enPassantRef.current && !b[bestMove.to];
       const isCap = !!b[bestMove.to] || isEpMove;
       const baseSan = piece ? buildBaseSAN(bestMove.from, bestMove.to, piece, promotion, isCap) : `${sqToAlg(bestMove.from)}${sqToAlg(bestMove.to)}`;
-      pushHistory();
+      pushHistory(); redoStackRef.current = [];
       const newB = [...b];
       const cap = newB[bestMove.to];
       const lostWhite: string[] = [];
@@ -2247,8 +2455,8 @@ export default function App() {
         .arrows-layer .annot { animation: annot-in .16s ease-out; }
         @keyframes annot-in { from { opacity: 0; } }
         .piece-svg, .piece-unicode { position: relative; z-index: 2; }
-        .clock-bar { display:flex; align-items:stretch; justify-content:center; gap:8px; margin:0 0 4px; }
-        .clock { flex:1; max-width:220px; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 12px; border-radius:12px; background:linear-gradient(135deg,rgba(45,45,60,.95),rgba(20,20,30,.95)); border:2px solid rgba(255,255,255,.10); transition:all .25s ease; }
+        .clock-bar { display:flex; align-items:stretch; justify-content:center; gap:8px; margin:0 auto 4px; width:100%; max-width:100%; }
+        .clock { flex:1; max-width:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 12px; border-radius:12px; background:linear-gradient(135deg,rgba(45,45,60,.95),rgba(20,20,30,.95)); border:2px solid rgba(255,255,255,.10); transition:all .25s ease; }
         .clock .clock-label { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#9ca3af; font-weight:700; }
         .clock .clock-name { font-size:11px; font-weight:800; }
         .clock .clock-time { font-family:'Consolas','SF Mono',monospace; font-size:clamp(20px,2.2vw,28px); font-weight:900; letter-spacing:1.5px; font-variant-numeric:tabular-nums; line-height:1; }
@@ -2705,10 +2913,10 @@ export default function App() {
         ))}
       </div>
 
-      <div className="mx-auto px-2 w-full flex flex-col relative z-10" style={{ maxWidth: '1400px' }}>
+      <div className="mx-auto px-2 w-full flex flex-col relative z-10" style={{ maxWidth: '1700px' }}>
         <header className="text-center mb-0 shrink-0">
           <h1 className="text-xl xl:text-2xl font-bold mb-0 bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-            ♔♚ 👑 Bąbel Chess 👑🏁♚♔
+            ♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔
           </h1>
           <p className="text-xs text-gray-400 max-w-2xl mx-auto hidden xl:block">
             Figury Merida / Kingdom - wybierz w Ustawieniach
@@ -2721,7 +2929,7 @@ export default function App() {
               <div className="flex justify-between items-center mb-1 shrink-0 flex-wrap gap-2">
                 <div className="flex items-center min-w-0 flex-1">
                   <span className={`status-indicator ${engineRunning ? 'busy' : 'online'}`}></span>
-                  <span className="font-bold text-sm sm:text-lg truncate" title="♔♚ 👑 Bąbel Chess 👑🏁♚♔">♔♚ 👑 Bąbel Chess 👑🏁♚♔</span>
+                  <span className="font-bold text-sm sm:text-lg truncate" title="♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔">♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔</span>
                   <span
                     title={engineStatus === 'ready' ? 'Przeciwnik: Stockfish 19 (pełna siła) - kliknij, by przeładować silnik' : engineStatus === 'loading' ? 'Silnik Stockfish się ładuje…' : 'Stockfish niedostępny - kliknij, by spróbować ponownie'}
                     onClick={() => { if (engineStatus === 'error') stockfish.retry().catch(() => {}); }}
@@ -2735,7 +2943,7 @@ export default function App() {
                     {engineStatus === 'ready' ? '♟️ Stockfish 19' : engineStatus === 'loading' ? '⏳ Ładowanie silnika…' : '❌ Brak silnika (kliknij)'}
                   </span>
                 </div>
-                <div className={`font-bold ${gameResult ? 'text-yellow-400' : sideToMove === 'w' ? 'text-blue-400' : 'text-red-400'}`}>
+                <div className={`font-bold text-lg ${gameResult ? 'text-yellow-400' : sideToMove === 'w' ? 'text-blue-400' : 'text-red-400'}`}>
                   {gameResult
                     ? (gameResult.type === 'mate'
                         ? (gameResult.winner === 'w' ? '🏆 Szach-mat! Białe wygrywają' : '🏆 Szach-mat! Czarne wygrywają')
@@ -2767,7 +2975,7 @@ export default function App() {
                       <div className="clock-time">{timeControl === 0 ? '∞' : fmt(whiteTime)}</div>
                       <div className="dot"></div>
                     </div>
-                    <div className="clock-mid"><span className="vs">⚔️</span><span>{timeControl === 0 ? 'bez czasu' : `${timeControl} min`}</span></div>
+                    <div className="clock-mid"><span className="vs">⚔️</span><span>{timeControl === 0 ? 'bez czasu' : (() => { const t = Math.round(timeControl * 60); const m = Math.floor(t / 60); const s = t % 60; return s === 0 ? `${m} min` : `${m} min ${s} s`; })()}</span></div>
                     <div className={`clock ${bActive ? 'active-b' : ''} ${bCls}`}>
                       <div className="dot"></div>
                       <div className="clock-time">{timeControl === 0 ? '∞' : fmt(blackTime)}</div>
@@ -2782,8 +2990,8 @@ export default function App() {
                   <div className="w-full flex items-center justify-center">
                     <div className="chess-board grid grid-cols-8 gap-0 border-8 rounded-md overflow-hidden shadow-2xl aspect-[1]"
                          style={{
-                          maxWidth: '95vw',
-                          maxHeight: '70vh',
+                          maxWidth: '92vw',
+                          maxHeight: '72vh',
                            width: 'auto',
                            height: 'auto',
                            borderColor: '#5c3a1e',
@@ -3096,8 +3304,8 @@ export default function App() {
                       <button type="button" className="action-btn" onClick={showHint} title="Pokaż podpowiedź komputera (najlepszy ruch)" aria-label="Podpowiedź"><span className="act-ico">💡</span>Podpowiedź</button>
                       <button type="button" className="action-btn" onClick={offerDraw} title="Zaproponuj remis" aria-label="Zaproponuj remis"><span className="act-ico">🤝</span>Remis</button>
                       <button type="button" className="action-btn danger" onClick={resignGame} title="Poddaj partię" aria-label="Poddaj partię"><span className="act-ico">🏳️</span>Poddaj</button>
-                      <button type="button" className="action-btn" onClick={() => { try { localStorage.setItem('bcz-chess-position', boardToFEN()); localStorage.setItem('bcz-chess-human-color', humanColorRef.current); localStorage.setItem('bcz-chess-flipped', String(flipped)); localStorage.setItem('bcz-chess-gamemode', gameMode); localStorage.setItem('bcz-chess-newopponent', newOpponent); localStorage.setItem('bcz-chess-newcolor', newColor); localStorage.setItem('bcz-chess-history', JSON.stringify(historyStackRef.current)); localStorage.setItem('bcz-chess-moves', JSON.stringify([...mhRef.current])); } catch { /* ignore */ } window.location.reload(); }} title="Odśwież stronę z zachowaniem pozycji" aria-label="Odśwież stronę z zachowaniem pozycji szach"><span className="act-ico">🔄</span>Odśwież</button>
                       <button type="button" className="action-btn" onClick={() => { setArrows([]); setCircles([]); setArrowPending(null); }} title="Wyczyść strzałki i kółka z planszy" aria-label="Wyczyść adnotacje"><span className="act-ico">🧹</span>Wyczyść</button>
+                      <button type="button" className="action-btn" onClick={() => { try { localStorage.setItem('bcz-chess-position', boardToFEN()); localStorage.setItem('bcz-chess-human-color', humanColorRef.current); localStorage.setItem('bcz-chess-flipped', String(flippedRef.current)); localStorage.setItem('bcz-chess-gamemode', gameModeRef.current); localStorage.setItem('bcz-chess-newopponent', newOpponentRef.current); localStorage.setItem('bcz-chess-newcolor', newColorRef.current); localStorage.setItem('bcz-chess-history', JSON.stringify(historyStackRef.current)); localStorage.setItem('bcz-chess-moves', JSON.stringify([...mhRef.current])); localStorage.setItem('bcz-chess-cw', JSON.stringify([...cwRef.current])); localStorage.setItem('bcz-chess-cb', JSON.stringify([...cbRef.current])); localStorage.setItem('bcz-chess-wt', String(timeRefs.current.w)); localStorage.setItem('bcz-chess-bt', String(timeRefs.current.b)); localStorage.setItem('bcz-chess-opening', openingNameRef.current); } catch { /* ignore */ } window.location.reload(); }} title="Odśwież stronę z zachowaniem pozycji" aria-label="Odśwież stronę z zachowaniem pozycji szach"><span className="act-ico">🔄</span>Odśwież</button>
                     </div>
                   </div>
                   <div className="ctl-card" title="Poziom komputera i tempo gry">
@@ -3119,13 +3327,50 @@ export default function App() {
                     </div>
                     <div className="ctl-hint">⏱️ Czas na partię (dla każdego):</div>
                     <div className="chips" role="group" aria-label="Kontrola czasu">
-                      {[0, 1, 3, 5, 10, 15, 25, 30, 45, 60, 90, 120, 180].map(m => (
+                      {[0, 1, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 90, 120, 180].map(m => (
                         <button type="button" key={m} aria-pressed={timeControl === m} title={m === 0 ? 'Gra bez zegara' : `Każdy gracz ma ${m} minut`} className={`chip ${timeControl === m ? 'active-time' : ''}`} onClick={() => {
                           setTimeControl(m);
                           timeRefs.current = { w: m * 60, b: m * 60 };
                           setWhiteTime(m * 60); setBlackTime(m * 60);
                         }}>{m === 0 ? '∞ bez czasu' : `${m} min`}</button>
                       ))}
+                    </div>
+                    <div className="chips" style={{ marginTop: 6 }} role="group" aria-label="Własny czas na partię">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={customTime}
+                        onChange={(e) => setCustomTime(e.target.value)}
+                        placeholder="minuty"
+                        className="chip"
+                        style={{ flex: 1, minWidth: 70 }}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={customSeconds}
+                        onChange={(e) => setCustomSeconds(e.target.value)}
+                        placeholder="sekundy"
+                        className="chip"
+                        style={{ flex: 1, minWidth: 70 }}
+                      />
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => {
+                          const m = parseInt(customTime || '0', 10);
+                          const s = parseInt(customSeconds || '0', 10);
+                          if (!Number.isFinite(m) || !Number.isFinite(s) || m < 0 || s < 0 || (m === 0 && s === 0)) return;
+                          const total = m * 60 + s;
+                          setTimeControl(m + s / 60);
+                          timeRefs.current = { w: total, b: total };
+                          setWhiteTime(total); setBlackTime(total);
+                        }}
+                      >
+                        wybierz czas
+                      </button>
                     </div>
                     <div className="ctl-hint">{arrowMode === 'click' ? 'PPM: początek → 2. PPM: koniec (strzałka) / to samo pole (kółko)' : 'PPM: kółko • PPM + przeciągnij: strzałka'}</div>
                   </div>
@@ -3137,7 +3382,7 @@ export default function App() {
             </div>
           </div>
           
-          <div className="w-full xl:w-[340px] shrink-0 side-sticky">
+          <div className="w-full xl:w-[460px] shrink-0 side-sticky">
             <div className="tab-container">
               {['history', 'puzzles', 'options'].map(tab => (
                 <button 
@@ -3158,7 +3403,35 @@ export default function App() {
 
             <div className={`tab-content ${activeTab === 'history' ? 'active' : ''} panel`}>
               <h3 className="font-bold text-lg mb-4">📊 Analiza Gry</h3>
-              
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
+                <button onClick={navUndoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Cofnij wszystkie ruchy">&lt;&lt;</button>
+                <button onClick={navUndo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Cofnij o 1 ruch">◀</button>
+                <button onClick={navRedo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Do przodu o 1 ruch">▶</button>
+                <button onClick={navRedoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Do przodu wszystkie ruchy">&gt;&gt;</button>
+              </div>
+
+              <h3 className="font-bold text-lg mt-2 mb-4">📜 Historia Ruchów</h3>
+              <div className="move-history">
+                {moveHistory.length === 0 ? (
+                  <div className="text-gray-400 text-center py-6">🎮 Wybierz "Start partii" aby Rozpocząć Rozgrywkę!!! 🎮</div>
+                ) : (
+                  (() => {
+                    const rows = [];
+                    for (let i = 0; i < moveHistory.length; i += 2) {
+                      rows.push(
+                        <div key={i} className="move-row">
+                          <span className="move-num">{Math.floor(i / 2) + 1}.</span>
+                          <span className="move-white">{moveHistory[i]?.san || ''}</span>
+                          <span className="move-black">{moveHistory[i + 1]?.san || ''}</span>
+                        </div>
+                      );
+                    }
+                    return rows;
+                  })()
+                )}
+              </div>
+
               <div className="info-row">
                 <span className="info-label">🎮 Stan gry:</span>
                 <span className="info-value">
@@ -3242,26 +3515,6 @@ export default function App() {
                 </div>
               </div>
 
-              <h3 className="font-bold text-lg mt-8 mb-4">📜 Historia Ruchów</h3>
-              <div className="move-history">
-                {moveHistory.length === 0 ? (
-                  <div className="text-gray-400 text-center py-6">🎮 Wybierz "Start partii" aby Rozpocząć Rozgrywkę!!! 🎮</div>
-                ) : (
-                  (() => {
-                    const rows = [];
-                    for (let i = 0; i < moveHistory.length; i += 2) {
-                      rows.push(
-                        <div key={i} className="move-row">
-                          <span className="move-num">{Math.floor(i / 2) + 1}.</span>
-                          <span className="move-white">{moveHistory[i]?.san || ''}</span>
-                          <span className="move-black">{moveHistory[i + 1]?.san || ''}</span>
-                        </div>
-                      );
-                    }
-                    return rows;
-                  })()
-                )}
-              </div>
             </div>
             
             <div className={`tab-content ${activeTab === 'options' ? 'active' : ''} panel`}>
@@ -3309,8 +3562,7 @@ export default function App() {
                     <span className="text-gray-400 text-xs w-9 text-right">{volume}%</span>
                   </label>
                   <div className="flex flex-wrap gap-2">
-                    <button className="btn btn-secondary bottom-btn" onClick={() => playSound('move')}>▶️ Test</button>
-                    <button className="btn btn-secondary bottom-btn" onClick={() => playSound('levelup')}>🏆 Mat</button>
+                    <button className="btn btn-secondary bottom-btn w-full" onClick={() => playSound('levelup')}>🏆 Mat</button>
                   </div>
                 </div>
                 <div>
