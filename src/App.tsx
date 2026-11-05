@@ -2930,18 +2930,8 @@ export default function App() {
                 <div className="flex items-center min-w-0 flex-1">
                   <span className={`status-indicator ${engineRunning ? 'busy' : 'online'}`}></span>
                   <span className="font-bold text-sm sm:text-lg truncate" title="♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔">♔ 𝓡𝔂𝓸𝓵𝓸 𝓒𝓱𝓮𝓼𝓼 ♔</span>
-                  <span
-                    title={engineStatus === 'ready' ? 'Przeciwnik: Stockfish 19 (pełna siła) - kliknij, by przeładować silnik' : engineStatus === 'loading' ? 'Silnik Stockfish się ładuje…' : 'Stockfish niedostępny - kliknij, by spróbować ponownie'}
-                    onClick={() => { if (engineStatus === 'error') stockfish.retry().catch(() => {}); }}
-                    style={{
-                      marginLeft: 10, fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 999,
-                      background: engineStatus === 'ready' ? 'linear-gradient(135deg,#16a34a,#065f46)' : engineStatus === 'loading' ? 'linear-gradient(135deg,#d97706,#92400e)' : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
-                      color: '#fff', whiteSpace: 'nowrap', flexShrink: 0,
-                      cursor: engineStatus === 'error' ? 'pointer' : 'default',
-                    }}
-                  >
-                    {engineStatus === 'ready' ? '♟️ Stockfish 19' : engineStatus === 'loading' ? '⏳ Ładowanie silnika…' : '❌ Brak silnika (kliknij)'}
-                  </span>
+                  {engineStatus === 'loading' && <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 999, background: 'linear-gradient(135deg,#d97706,#92400e)', color: '#fff', whiteSpace: 'nowrap', flexShrink: 0 }}>⏳ Ładowanie silnika…</span>}
+                  {engineStatus === 'error' && <span onClick={() => stockfish.retry().catch(() => {})} style={{ marginLeft: 10, fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 999, background: 'linear-gradient(135deg,#dc2626,#7f1d1d)', color: '#fff', whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer' }}>❌ Brak silnika (kliknij)</span>}
                 </div>
                 <div className={`font-bold text-lg ${gameResult ? 'text-yellow-400' : sideToMove === 'w' ? 'text-blue-400' : 'text-red-400'}`}>
                   {gameResult
