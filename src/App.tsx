@@ -606,7 +606,7 @@ export default function App() {
   const [gameActive, setGameActive] = useState(true);
   const [capturedWhite, setCapturedWhite] = useState<string[]>([]);
   const [capturedBlack, setCapturedBlack] = useState<string[]>([]);
-  const [difficulty, setDifficulty] = useState(2);
+  const [difficulty, setDifficulty] = useState(1);
   const [evalScore, setEvalScore] = useState<{ cp: number | null; mate: number | null }>({ cp: 25, mate: null });
   const [engineStatus, setEngineStatus] = useState<EngineStatus>('off');
   const [gameMode, setGameMode] = useState<'ai' | 'human'>('ai');
@@ -637,7 +637,7 @@ export default function App() {
   const [resultOverlayHidden, setResultOverlayHidden] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [volume, setVolume] = useState(80);
-  const [timeControl, setTimeControl] = useState(5);
+  const [timeControl, setTimeControl] = useState(0);
   const [customTime, setCustomTime] = useState('');
   const [customSeconds, setCustomSeconds] = useState('');
   const [whiteTime, setWhiteTime] = useState(300);
@@ -649,6 +649,7 @@ export default function App() {
   const [arrowMode, setArrowMode] = useState<'drag' | 'click'>('drag');
   const [arrowPending, setArrowPending] = useState<number | null>(null);
   const [hintMove, setHintMove] = useState<{ from: number; to: number } | null>(null);
+  const hintBusyRef = useRef(false);
   const [fenBox, setFenBox] = useState('');
   const [openingName, setOpeningName] = useState('');
   const openingNameRef = useRef('');
@@ -1430,6 +1431,7 @@ export default function App() {
     mhRef.current = [...snap.mh]; setMoveHistory([...snap.mh]);
     setLastMove(snap.lm); setBoard([...snap.board]); setSideToMove(snap.side);
     setSelectedSquare(null); setPossibleMoves([]);
+    setHintMove(null); setArrows([]); setCircles([]); setArrowPending(null);
     updateOpening(snap.mh); playSound('move');
   };
   const navRedo = () => {
@@ -1444,6 +1446,7 @@ export default function App() {
     mhRef.current = [...snap.mh]; setMoveHistory([...snap.mh]);
     setLastMove(snap.lm); setBoard([...snap.board]); setSideToMove(snap.side);
     setSelectedSquare(null); setPossibleMoves([]);
+    setHintMove(null); setArrows([]); setCircles([]); setArrowPending(null);
     updateOpening(snap.mh); playSound('move');
   };
   const navUndoAll = () => { while (historyStackRef.current.length > 0) navUndo(); };
@@ -1494,7 +1497,7 @@ export default function App() {
   };
 
   const showHint = async () => {
-    if (!gameActiveRef.current || engineRunningRef.current) return;
+    if (engineRunningRef.current || hintBusyRef.current) return;
     // W trybie zagadek użyj zweryfikowanego ruchu z Lichess (pole accept) - najszybsze i najdokładniejsze
     if (puzzleModeRef.current && puzzleIdxRef.current !== null) {
       const p = PUZZLES_FROM_LICHESS[puzzleIdxRef.current];
@@ -1508,12 +1511,17 @@ export default function App() {
         return;
       }
     }
-    // Podpowiedź ze Stockfisha: pełna siła (poziom 4), ale z limitem 3 s myślenia.
+    // Podpowiedź ze Stockfisha: poziom 4, limit 1,5 s (krócej = mniejsze obciążenie i lagi).
+    // Blokada zapobiega "zasypaniu" silnika wielokrotnymi kliknięciami.
     const sideAtStart = sideToMoveRef.current;
+    const fenAtStart = boardToFEN();
+    hintBusyRef.current = true;
+    setHintMove(null); setArrows([]); setCircles([]);
     try {
-      const r = await stockfish.findBestMove(boardToFEN(), 4, undefined, 3000);
+      const r = await stockfish.findBestMove(fenAtStart, 4, undefined, 1500);
       if (
-        r && gameActiveRef.current &&
+        r &&
+        boardToFEN() === fenAtStart &&
         sideToMoveRef.current === sideAtStart &&
         getLegalMoves(r.from).includes(r.to)
       ) {
@@ -1522,6 +1530,8 @@ export default function App() {
       }
     } catch {
       // Brak podpowiedzi gdy silnik niedostępny - nie zgadujemy słabym ruchem.
+    } finally {
+      hintBusyRef.current = false;
     }
   };
 
@@ -2952,7 +2962,7 @@ export default function App() {
                 </div>
               </div>
               <div className="text-center text-xs text-emerald-300 overflow-hidden text-ellipsis whitespace-nowrap px-2" style={{ marginBottom: 2, minHeight: 16 }} title={openingName || undefined}>{openingName ? `📖 ${openingName}` : ' '}</div>
-              <div className="clock-bar">
+              <div className="clock-bar" style={{ width: 'min(100%, 92vw, 72vh)', marginLeft: 'auto', marginRight: 'auto' }}>
                 {(() => {
                   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
                   const wActive = gameActive && !gameResult && sideToMove === 'w';
@@ -2982,7 +2992,7 @@ export default function App() {
                          style={{
                           maxWidth: '92vw',
                           maxHeight: '72vh',
-                           width: 'auto',
+                           width: 'min(100%, 92vw, 72vh)',
                            height: 'auto',
                            borderColor: '#5c3a1e',
                            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8), inset 0 0 30px rgba(0,0,0,0.3)',
@@ -3125,7 +3135,7 @@ export default function App() {
                             const [tx, ty] = pt(a.to);
                             return (
                               <g key={`a${i}`} className="annot">
-                                <polygon points={arrowPoly(fx, fy, tx, ty, 1.55)} fill="#000" opacity="0.30" stroke="#000" strokeWidth="0.03" strokeLinejoin="round" />
+                                <polygon points={arrowPoly(fx, fy, tx, ty, 1.25)} fill="#000" opacity="0.30" stroke="#000" strokeWidth="0.03" strokeLinejoin="round" />
                                 <polygon points={arrowPoly(fx, fy, tx, ty, 1)} fill={a.color} opacity="0.9" />
                               </g>
                             );
@@ -3395,10 +3405,10 @@ export default function App() {
               <h3 className="font-bold text-lg mb-4">📊 Analiza Gry</h3>
 
               <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
-                <button onClick={navUndoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Cofnij wszystkie ruchy">&lt;&lt;</button>
-                <button onClick={navUndo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Cofnij o 1 ruch">◀</button>
-                <button onClick={navRedo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Do przodu o 1 ruch">▶</button>
-                <button onClick={navRedoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: '12px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 32 }} title="Do przodu wszystkie ruchy">&gt;&gt;</button>
+                <button onClick={navUndoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: 'clamp(6px, 1.4vw, 9px) clamp(8px, 2vw, 12px)', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 'clamp(13px, 2.2vw, 18px)', lineHeight: 1 }} title="Cofnij wszystkie ruchy">&lt;&lt;</button>
+                <button onClick={navUndo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: 'clamp(6px, 1.4vw, 9px) clamp(8px, 2vw, 12px)', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 'clamp(13px, 2.2vw, 18px)', lineHeight: 1 }} title="Cofnij o 1 ruch">◀</button>
+                <button onClick={navRedo} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: 'clamp(6px, 1.4vw, 9px) clamp(8px, 2vw, 12px)', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 'clamp(13px, 2.2vw, 18px)', lineHeight: 1 }} title="Do przodu o 1 ruch">▶</button>
+                <button onClick={navRedoAll} style={{ flex: 1, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.2)', padding: 'clamp(6px, 1.4vw, 9px) clamp(8px, 2vw, 12px)', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 'clamp(13px, 2.2vw, 18px)', lineHeight: 1 }} title="Do przodu wszystkie ruchy">&gt;&gt;</button>
               </div>
 
               <h3 className="font-bold text-lg mt-2 mb-4">📜 Historia Ruchów</h3>
