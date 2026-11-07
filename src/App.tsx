@@ -660,6 +660,7 @@ export default function App() {
   const [puzzleLevelFilter, setPuzzleLevelFilter] = useState<'all' | 1 | 2 | 3>('all');
   const [puzzleVisible, setPuzzleVisible] = useState(80);
   const [puzzleMsg, setPuzzleMsg] = useState('');
+  const [puzzleJumpNo, setPuzzleJumpNo] = useState('');
   const [solvedPuzzles, setSolvedPuzzles] = useState<number[]>([]);
   const [listMsg, setListMsg] = useState('');
 
@@ -3196,6 +3197,39 @@ export default function App() {
                           })()}
                           <button className="btn btn-secondary" disabled={!puzzleActionsReady} onClick={() => { restorePuzzleFen(); setPuzzleMsg(`💡 ${PUZZLES_FROM_LICHESS[puzzleIdxRef.current]?.tip || ''}`); }}>🔁 Powtórz</button>
                           <button className="btn btn-secondary" disabled={!puzzleActionsReady} onClick={() => leavePuzzle()}>🚪 Wyjdź</button>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', marginTop: 14, opacity: puzzleActionsReady ? 1 : 0.55, transition: 'opacity 0.2s' }}>
+                          <span style={{ fontSize: 13, color: '#cbd5e1' }}>Następna o numerze:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={PUZZLES_FROM_LICHESS.length}
+                            value={puzzleJumpNo}
+                            onChange={(e) => setPuzzleJumpNo(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && puzzleActionsReady) {
+                                const n = parseInt(puzzleJumpNo, 10);
+                                if (Number.isFinite(n) && n >= 1 && n <= PUZZLES_FROM_LICHESS.length) {
+                                  startPuzzle(n - 1);
+                                  setPuzzleJumpNo('');
+                                }
+                              }
+                            }}
+                            placeholder={`np. ${PUZZLES_FROM_LICHESS.length}`}
+                            aria-label="Numer zagadki"
+                            style={{ width: 170, padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: '#f8fafc', fontSize: 14 }}
+                          />
+                          <button
+                            className="btn"
+                            disabled={!puzzleActionsReady}
+                            onClick={() => {
+                              const n = parseInt(puzzleJumpNo, 10);
+                              if (Number.isFinite(n) && n >= 1 && n <= PUZZLES_FROM_LICHESS.length) {
+                                startPuzzle(n - 1);
+                                setPuzzleJumpNo('');
+                              }
+                            }}
+                          >✅ Zatwierdź</button>
                         </div>
                       </div>
                     </div>
