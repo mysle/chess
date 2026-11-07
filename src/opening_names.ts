@@ -180,6 +180,190 @@ const PL_FAMILIES: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Ręczne tłumaczenia najczęstszych pełnych nazw (gwarantują poprawną polszczyznę)
+// ---------------------------------------------------------------------------
+const EXACT_PL: Record<string, string> = {
+  // Sycylijska
+  'Sicilian Defense': 'Obrona Sycylijska',
+  'Sicilian Defense: Najdorf Variation': 'Obrona Sycylijska, wariant Najdorfa',
+  'Sicilian Defense: Dragon Variation': 'Obrona Sycylijska, wariant smoka',
+  'Sicilian Defense: Scheveningen Variation': 'Obrona Sycylijska, wariant Scheveningen',
+  'Sicilian Defense: Sveshnikov Variation': 'Obrona Sycylijska, wariant Swiesznikowa',
+  'Sicilian Defense: Taimanov Variation': 'Obrona Sycylijska, wariant Taimanowa',
+  'Sicilian Defense: Kan Variation': 'Obrona Sycylijska, wariant Kana',
+  'Sicilian Defense: Classical Variation': 'Obrona Sycylijska, wariant klasyczny',
+  'Sicilian Defense: Alapin Variation': 'Obrona Sycylijska, wariant Alapina',
+  'Sicilian Defense: Closed': 'Obrona Sycylijska zamknięta',
+  'Sicilian Defense: Closed Variation': 'Obrona Sycylijska zamknięta',
+  'Sicilian Defense: Open': 'Obrona Sycylijska otwarta',
+  'Sicilian Defense: Smith-Morra Gambit': 'Obrona Sycylijska, gambit Smitha-Morry',
+  'Sicilian Defense: Grand Prix Attack': 'Obrona Sycylijska, atak Grand Prix',
+  'Sicilian Defense: Accelerated Dragon': 'Obrona Sycylijska, przyspieszony smok',
+  'Sicilian Defense: Hyperaccelerated Dragon': 'Obrona Sycylijska, hiperprzyspieszony smok',
+  'Sicilian Defense: Four Knights Variation': 'Obrona Sycylijska, wariant czterech skoczków',
+  'Sicilian Defense: Moscow Variation': 'Obrona Sycylijska, wariant moskiewski',
+  'Sicilian Defense: Rossolimo Variation': 'Obrona Sycylijska, wariant Rossolimo',
+  'Sicilian Defense: Boleslavsky Variation': 'Obrona Sycylijska, wariant Bolesławskiego',
+  'Sicilian Defense: Richter-Rauzer Variation': 'Obrona Sycylijska, wariant Richtera-Rauzera',
+  // Francuska
+  'French Defense': 'Obrona Francuska',
+  'French Defense: Winawer Variation': 'Obrona Francuska, wariant Winawera',
+  'French Defense: Classical Variation': 'Obrona Francuska, wariant klasyczny',
+  'French Defense: Advance Variation': 'Obrona Francuska, wariant wysunięty',
+  'French Defense: Exchange Variation': 'Obrona Francuska, wariant wymienny',
+  'French Defense: Tarrasch Variation': 'Obrona Francuska, wariant Tarrascha',
+  'French Defense: Rubinstein Variation': 'Obrona Francuska, wariant Rubinsteina',
+  'French Defense: Steinitz Variation': 'Obrona Francuska, wariant Steinitza',
+  'French Defense: Normal Variation': 'Obrona Francuska, wariant normalny',
+  // Caro-Kann
+  'Caro-Kann Defense': 'Obrona Caro-Kann',
+  'Caro-Kann Defense: Advance Variation': 'Obrona Caro-Kann, wariant wysunięty',
+  'Caro-Kann Defense: Exchange Variation': 'Obrona Caro-Kann, wariant wymienny',
+  'Caro-Kann Defense: Classical Variation': 'Obrona Caro-Kann, wariant klasyczny',
+  'Caro-Kann Defense: Panov Attack': 'Obrona Caro-Kann, atak Panowa',
+  'Caro-Kann Defense: Two Knights Variation': 'Obrona Caro-Kann, wariant dwóch skoczków',
+  'Caro-Kann Defense: Bronstein-Larsen Variation': 'Obrona Caro-Kann, wariant Bronsteina-Larsena',
+  // Hiszpańska
+  'Ruy Lopez': 'Partia Hiszpańska',
+  'Ruy Lopez: Berlin Defense': 'Partia Hiszpańska, obrona Berlińska',
+  'Ruy Lopez: Morphy Defense': 'Partia Hiszpańska, obrona Morphy\'ego',
+  'Ruy Lopez: Closed': 'Partia Hiszpańska zamknięta',
+  'Ruy Lopez: Open': 'Partia Hiszpańska otwarta',
+  'Ruy Lopez: Marshall Attack': 'Partia Hiszpańska, atak Marshalla',
+  'Ruy Lopez: Exchange Variation': 'Partia Hiszpańska, wariant wymienny',
+  'Ruy Lopez: Steinitz Defense': 'Partia Hiszpańska, obrona Steinitza',
+  'Ruy Lopez: Schliemann Defense': 'Partia Hiszpańska, obrona Schliemanna',
+  'Ruy Lopez: Cozio Defense': 'Partia Hiszpańska, obrona Cozia',
+  'Ruy Lopez: Bird Defence': 'Partia Hiszpańska, obrona Birda',
+  'Ruy Lopez: Bird Defense': 'Partia Hiszpańska, obrona Birda',
+  // Włoska / szkocka / wiedeńska
+  'Italian Game': 'Partia Włoska',
+  'Italian Game: Giuoco Piano': 'Partia Włoska (Giuoco Piano)',
+  'Italian Game: Giuoco Pianissimo': 'Partia Włoska (Giuoco Pianissimo)',
+  'Italian Game: Evans Gambit': 'Partia Włoska, gambit Evansa',
+  'Italian Game: Two Knights Defense': 'Partia Włoska, obrona dwóch skoczków',
+  'Italian Game: Classical Variation': 'Partia Włoska, wariant klasyczny',
+  'Scotch Game': 'Partia Szkocka',
+  'Scotch Game: Classical Variation': 'Partia Szkocka, wariant klasyczny',
+  'Scotch Game: Mieses Variation': 'Partia Szkocka, wariant Miesesa',
+  'Scotch Game: Schmidt Variation': 'Partia Szkocka, wariant Schmidta',
+  'Vienna Game': 'Partia Wiedeńska',
+  'Vienna Game: Vienna Gambit': 'Partia Wiedeńska, gambit wiedeński',
+  'Vienna Game: Falkbeer Variation': 'Partia Wiedeńska, wariant Falkbeera',
+  'King\'s Gambit': 'Gambit Królewski',
+  'King\'s Gambit Accepted': 'Gambit Królewski przyjęty',
+  'King\'s Gambit Declined': 'Gambit Królewski odrzucony',
+  'Bishop\'s Opening': 'Debiut Gońca',
+  'Bishop\'s Opening: Berlin Defense': 'Debiut Gońca, obrona Berlińska',
+  // Gambit hetmański i debiuty hetmańskie
+  'Queen\'s Gambit': 'Gambit Hetmański',
+  'Queen\'s Gambit Accepted': 'Gambit Hetmański przyjęty',
+  'Queen\'s Gambit Declined': 'Gambit Hetmański odrzucony',
+  'Queen\'s Gambit Declined: Orthodox Defense': 'Gambit Hetmański odrzucony, obrona ortodoksyjna',
+  'Queen\'s Gambit Declined: Slav Defense': 'Gambit Hetmański odrzucony, obrona słowiańska',
+  'Queen\'s Gambit Declined: Semi-Slav Defense': 'Gambit Hetmański odrzucony, obrona półsłowiańska',
+  'Queen\'s Gambit Declined: Exchange Variation': 'Gambit Hetmański odrzucony, wariant wymienny',
+  'Queen\'s Gambit Declined: Tartakower Defense': 'Gambit Hetmański odrzucony, obrona Tartakowera',
+  'Queen\'s Gambit Accepted: Classical Defense': 'Gambit Hetmański przyjęty, obrona klasyczna',
+  'Slav Defense': 'Obrona Słowiańska',
+  'Semi-Slav Defense': 'Obrona Półsłowiańska',
+  'Semi-Slav Defense: Meran Variation': 'Obrona Półsłowiańska, wariant Meranu',
+  'Semi-Slav Defense: Botvinnik Variation': 'Obrona Półsłowiańska, wariant Botwinnika',
+  'Tarrasch Defense': 'Obrona Tarrascha',
+  'Catalan Opening': 'Partia Katalońska',
+  'Catalan Opening: Closed': 'Partia Katalońska zamknięta',
+  'Catalan Opening: Open': 'Partia Katalońska otwarta',
+  // Indyjska
+  'King\'s Indian Defense': 'Obrona Królewsko-Indyjska',
+  'King\'s Indian Defense: Classical Variation': 'Obrona Królewsko-Indyjska, wariant klasyczny',
+  'King\'s Indian Defense: Sämisch Variation': 'Obrona Królewsko-Indyjska, wariant Sämischa',
+  'King\'s Indian Defense: Fianchetto Variation': 'Obrona Królewsko-Indyjska, wariant fianchetta',
+  'King\'s Indian Defense: Four Pawns Attack': 'Obrona Królewsko-Indyjska, atak czterech pionów',
+  'King\'s Indian Attack': 'Atak Królewsko-Indyjski',
+  'Nimzo-Indian Defense': 'Obrona Nimzoindyjska',
+  'Nimzo-Indian Defense: Rubinstein System': 'Obrona Nimzoindyjska, system Rubinsteina',
+  'Nimzo-Indian Defense: Classical Variation': 'Obrona Nimzoindyjska, wariant klasyczny',
+  'Nimzo-Indian Defense: Leningrad Variation': 'Obrona Nimzoindyjska, wariant leningradzki',
+  'Queen\'s Indian Defense': 'Obrona Hetmańsko-Indyjska',
+  'Bogo-Indian Defense': 'Obrona Bogo-Indyjska',
+  'Grünfeld Defense': 'Obrona Grünfelda',
+  'Grünfeld Defense: Exchange Variation': 'Obrona Grünfelda, wariant wymienny',
+  'Grünfeld Defense: Russian System': 'Obrona Grünfelda, system rosyjski',
+  'Old Indian Defense': 'Obrona Staroindyjska',
+  'Benoni Defense': 'Obrona Benoni',
+  'Benoni Defense: Modern Variation': 'Obrona Benoni, wariant nowoczesny',
+  'Benko Gambit': 'Gambit Benko (Wołżański)',
+  'Budapest Gambit': 'Gambit Budapeszteński',
+  'Dutch Defense': 'Obrona Holenderska',
+  'Dutch Defense: Stonewall Variation': 'Obrona Holenderska, wariant Stonewalla',
+  'Dutch Defense: Leningrad Variation': 'Obrona Holenderska, wariant leningradzki',
+  'Dutch Defense: Classical Variation': 'Obrona Holenderska, wariant klasyczny',
+  // Pozostałe popularne
+  'English Opening': 'Debiut Angielski',
+  'English Opening: Symmetrical Variation': 'Debiut Angielski, wariant symetryczny',
+  'English Opening: Reversed Sicilian': 'Debiut Angielski, odwrócona sycylijska',
+  'English Opening: King\'s English Variation': 'Debiut Angielski, wariant królewsko-angielski',
+  'Réti Opening': 'Debiut Rétiego',
+  'Scandinavian Defense': 'Obrona Skandynawska',
+  'Scandinavian Defense: Mieses-Kotroc Variation': 'Obrona Skandynawska, wariant Miesesa-Kotroca',
+  'Petrov\'s Defense': 'Obrona Rosyjska (Petrowa)',
+  'Petrov Defense': 'Obrona Rosyjska (Petrowa)',
+  'Russian Game': 'Partia Rosyjska',
+  'Pirc Defense': 'Obrona Pirca',
+  'Modern Defense': 'Obrona Nowoczesna',
+  'Alekhine Defense': 'Obrona Alechina',
+  'Philidor Defense': 'Obrona Philidora',
+  'Nimzowitsch Defense': 'Obrona Nimzowitscha',
+  'Trompowsky Attack': 'Atak Trompowskiego',
+  'London System': 'System Londyński',
+  'Colle System': 'System Collego',
+  'Torre Attack': 'Atak Torrego',
+  'Nimzo-Larsen Attack': 'Atak Nimzo-Larsena',
+  'Bird Opening': 'Debiut Birda',
+  'Polish Opening': 'Otwarcie Polskie',
+  'Sokolsky Opening': 'Debiut Sokolskiego',
+  'Larsen Opening': 'Debiut Larsena',
+  'Grob Opening': 'Debiut Groba',
+  'Van Geet Opening': 'Atak Van Geeta',
+  'Mieses Opening': 'Debiut Miesesa',
+  'Saragossa Opening': 'Debiut Saragossy',
+  'Anderssen\'s Opening': 'Debiut Anderssena',
+  'Ware Opening': 'Debiut Ware\'a',
+  'Clemenz Opening': 'Debiut Clemenza',
+  'Barnes Opening': 'Otwarcie Barnesa',
+  'Amar Opening': 'Debiut Amara',
+  'Four Knights Game': 'Partia Czterech Skoczków',
+  'Three Knights Opening': 'Debiut Trzech Skoczków',
+  'Two Knights Defense': 'Obrona Dwóch Skoczków',
+  'Ponziani Opening': 'Debiut Ponzianiego',
+  'Danish Gambit': 'Gambit Duński',
+  'Center Game': 'Partia Centralna',
+  'Albin Countergambit': 'Kontrgambit Albina',
+  'Blackmar-Diemer Gambit': 'Gambit Blackmara-Diemera',
+  'Englund Gambit': 'Gambit Englunda',
+  'Latvian Gambit': 'Gambit Łotewski',
+  'Elephant Gambit': 'Gambit Słonia',
+  'Owen Defense': 'Obrona Owena',
+  'St. George Defense': 'Obrona św. Jerzego',
+  'King\'s Pawn Game': 'Otwarcie Pionem Królewskim',
+  'Queen\'s Pawn Game': 'Otwarcie Pionem Hetmańskim',
+  'Open Game': 'Partia Otwarta',
+  'Closed Game': 'Partia Zamknięta',
+  'Semi-Open Game': 'Partia Półotwarta',
+  'Semi-Closed Game': 'Partia Półzamknięta'
+};
+
+function lookupExactPolish(name: string): string | undefined {
+  const direct = EXACT_PL[name];
+  if (direct) return direct;
+  const low = name.toLowerCase().replace(/’/g, "'");
+  for (const [k, v] of Object.entries(EXACT_PL)) {
+    if (k.toLowerCase().replace(/’/g, "'") === low) return v;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Słowniki pomocnicze
 // ---------------------------------------------------------------------------
 const HEAD_WORDS: Record<string, { pl: string; g: Gender }> = {
@@ -899,6 +1083,9 @@ function translateSegment(segment: string, familyGender: Gender): string {
 }
 
 export function localizeOpeningName(name: string): string {
+  const exact = lookupExactPolish(name);
+  if (exact) return exact;
+
   const colon = name.indexOf(':');
   let family = (colon === -1 ? name : name.slice(0, colon)).trim();
   let rest = colon === -1 ? '' : name.slice(colon + 1).trim();
