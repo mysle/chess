@@ -3219,7 +3219,10 @@ export default function App() {
                             value={puzzleJumpNo}
                             onChange={(e) => setPuzzleJumpNo(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && puzzleActionsReady) jumpToPuzzleNumber();
+                              if (e.key === 'Enter' && puzzleActionsReady) {
+                                e.preventDefault();
+                                jumpToPuzzleNumber();
+                              }
                             }}
                             placeholder={`np. ${PUZZLES_FROM_LICHESS.length}`}
                             aria-label="Numer zagadki"
@@ -3699,7 +3702,7 @@ export default function App() {
                       max={PUZZLES_FROM_LICHESS.length}
                       value={puzzleJumpNo}
                       onChange={(e) => setPuzzleJumpNo(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') jumpToPuzzleNumber(); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); jumpToPuzzleNumber(); } }}
                       placeholder={`1 – ${PUZZLES_FROM_LICHESS.length}`}
                       aria-label="Numer zagadki"
                       style={{ width: 220, padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: '#f8fafc', fontSize: 14 }}
