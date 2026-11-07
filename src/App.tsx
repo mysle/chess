@@ -1675,6 +1675,18 @@ export default function App() {
     playSound('start');
   };
 
+  // Przejście do zagadki o podanym numerze (1-based, jak w UI).
+  const jumpToPuzzleNumber = () => {
+    const n = parseInt(puzzleJumpNo, 10);
+    if (!Number.isFinite(n) || n < 1 || n > PUZZLES_FROM_LICHESS.length) {
+      setListMsg(`Podaj numer zagadki od 1 do ${PUZZLES_FROM_LICHESS.length}.`);
+      return;
+    }
+    startPuzzle(n - 1);
+    setPuzzleJumpNo('');
+    setListMsg('');
+  };
+
   // Losowa zagadka spośród jeszcze niezrobionych (postęp zapamiętany)
   const randomUnsolved = (): number => {
     const open = PUZZLES_FROM_LICHESS.map((_, i) => i).filter(i => !solvedPuzzles.includes(i));
@@ -3207,13 +3219,7 @@ export default function App() {
                             value={puzzleJumpNo}
                             onChange={(e) => setPuzzleJumpNo(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && puzzleActionsReady) {
-                                const n = parseInt(puzzleJumpNo, 10);
-                                if (Number.isFinite(n) && n >= 1 && n <= PUZZLES_FROM_LICHESS.length) {
-                                  startPuzzle(n - 1);
-                                  setPuzzleJumpNo('');
-                                }
-                              }
+                              if (e.key === 'Enter' && puzzleActionsReady) jumpToPuzzleNumber();
                             }}
                             placeholder={`np. ${PUZZLES_FROM_LICHESS.length}`}
                             aria-label="Numer zagadki"
@@ -3222,13 +3228,7 @@ export default function App() {
                           <button
                             className="btn"
                             disabled={!puzzleActionsReady}
-                            onClick={() => {
-                              const n = parseInt(puzzleJumpNo, 10);
-                              if (Number.isFinite(n) && n >= 1 && n <= PUZZLES_FROM_LICHESS.length) {
-                                startPuzzle(n - 1);
-                                setPuzzleJumpNo('');
-                              }
-                            }}
+                            onClick={jumpToPuzzleNumber}
                           >✅ Zatwierdź</button>
                         </div>
                       </div>
@@ -3690,6 +3690,25 @@ export default function App() {
                         title="Wylosuj zagadkę i pokaż podpowiedź na szachownicy"
                       >💡 Losowa z podpowiedzią</button>
                     </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                    <span style={{ fontSize: 14, color: '#cbd5e1', fontWeight: 600 }}>Zagadka o numerze:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={PUZZLES_FROM_LICHESS.length}
+                      value={puzzleJumpNo}
+                      onChange={(e) => setPuzzleJumpNo(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') jumpToPuzzleNumber(); }}
+                      placeholder={`1 – ${PUZZLES_FROM_LICHESS.length}`}
+                      aria-label="Numer zagadki"
+                      style={{ width: 220, padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: '#f8fafc', fontSize: 14 }}
+                    />
+                    <button
+                      className="btn bottom-btn"
+                      onClick={jumpToPuzzleNumber}
+                      title="Przejdź do zagadki o podanym numerze"
+                    >🔎 Przejdź do zagadki</button>
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
                     <button
