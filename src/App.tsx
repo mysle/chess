@@ -1536,6 +1536,22 @@ export default function App() {
     }
   };
 
+  // Spacja = podpowiedź (poza polami tekstowymi, żeby nie przeszkadzać w wpisywaniu).
+  const showHintRef = useRef(showHint);
+  useEffect(() => { showHintRef.current = showHint; });
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+      e.preventDefault();
+      void showHintRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const clearPuzzleTimer = () => {
     if (puzzleTimerRef.current) { clearTimeout(puzzleTimerRef.current); puzzleTimerRef.current = null; }
   };
